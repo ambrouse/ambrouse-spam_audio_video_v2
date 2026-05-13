@@ -203,17 +203,18 @@ const CHUNK_PRESETS = {
   high: { min_words: 24, max_words: 88, label: 'Cao' },
 };
 
-const DEFAULT_REWRITE_PROMPT = `Ban la bien tap truyen audio tieng Viet.
-Boi canh truyen: {story_context}
-Yeu cau:
-1. Viet lai duoi goc nhin nhan vat chinh.
-2. Giu y chinh va mach truyen.
-3. Luoc bo canh khong quan trong, lap lai, quang cao, menu web.
-4. Dung tieng Viet co dau, cau van tu nhien theo cach nguoi Viet noi va viet; uu tien tu ngu pho thong, han che Han Viet kho hieu.
-5. Dat nhip cau tu nhien cho giong doc audio: uu tien cau ngan va vua, tranh cau qua dai; tach y bang dau cham hoac dau phay khi co tu hai ve tro len.
-6. Chi dung dau cham va dau phay, khong dung ky tu dac biet khac.
-7. Khong them markdown, khong danh so muc, khong giai thich.
-Noi dung chapter:
+const DEFAULT_REWRITE_PROMPT = `Bạn là biên tập truyện audio tiếng Việt.
+Bối cảnh truyện: {story_context}
+Yêu cầu:
+1. Viết lại dưới góc nhìn nhân vật chính.
+2. Giữ ý chính và mạch truyện.
+3. Lược bỏ cảnh không quan trọng, lặp lại, quảng cáo, menu web.
+4. BẮT BUỘC dùng tiếng Việt có dấu đầy đủ. Nếu input bị lỗi mã hóa, thiếu dấu, hoặc có ký tự lạ, hãy khôi phục thành tiếng Việt có dấu tự nhiên.
+5. Câu văn phải tự nhiên theo cách người Việt nói và viết; ưu tiên từ ngữ phổ thông, hạn chế Hán Việt khó hiểu.
+6. Đặt nhịp câu tự nhiên cho giọng đọc audio: ưu tiên câu ngắn và vừa, tránh câu quá dài.
+7. Chỉ dùng dấu chấm, dấu phẩy, dấu chấm phẩy để tạo khoảng nghỉ. Nếu gặp dấu hỏi, dấu than, dấu hai chấm, ngoặc, gạch ngang, hãy chuyển thành dấu nghỉ phù hợp thay vì xóa ý.
+8. Mỗi đoạn nên có các khoảng nghỉ rõ ràng, giúp model TTS đọc ổn định. Không dùng markdown, không đánh số mục, không giải thích.
+Nội dung chapter:
 {chapter_text}
 `;
 
@@ -225,7 +226,9 @@ Yêu cầu bắt buộc:
 2. Không trả về ảnh, link, markdown image, data url, html, hoặc file attachment.
 3. Prompt phải chỉ đạo rõ: landscape 16:9, cinematic wide shot, ưu tiên độ nét cao.
 4. Nêu rõ nhân vật chính, bố cục tiền-trung-hậu cảnh, ánh sáng, camera angle, mood.
+4.1. Chỉ mô tả xung đột theo hướng biểu tượng, không mô tả gây sốc hoặc chi tiết thương tổn cơ thể.
 5. Bổ sung negative cues: no text, no watermark, no logo, blurry, low quality, oversaturated, deformed hands.
+5.1. Thêm safety cues: PG-13 fantasy tone, symbolic tension, elegant atmosphere, non-graphic storytelling.
 6. Độ dài 70-140 từ, không lặp lại tình tiết thô, chỉ giữ chi tiết giàu hình ảnh.
 
 Bối cảnh truyện: {story_context}
@@ -233,7 +236,7 @@ Diễn biến cần minh họa:
 {scene_text}
 `;
 
-const DEFAULT_VIDEO_STORY_CONTEXT = 'Manhua cinematic, khung hình ngang 16:9, không chữ trên hình, nhân vật nhất quán, bố cục rõ ràng, ưu tiên ảnh sắc nét, ánh sáng điện ảnh và không watermark.';
+const DEFAULT_VIDEO_STORY_CONTEXT = "Manhua cinematic, khung hình ngang 16:9, không chữ trên hình, nhân vật nhất quán, bố cục rõ ràng, ưu tiên ảnh sắc nét, ánh sáng điện ảnh và không watermark.";
 const DEFAULT_BRIDGE_BASE_URL = 'http://127.0.0.1:8008';
 
 const VIDEO_PROD_PRESET = {
@@ -390,7 +393,7 @@ async function testLlmChat() {
 }
 
 async function refreshGeminiPoolStatus(silent = false) {
-  const res = await fetch('/api/gemini/chrome-pool/status');
+  const res = await fetch('/api/browser/chrome-pool/status');
   const data = await res.json();
   renderGeminiPoolStatus(data);
   if (!silent) {
@@ -731,6 +734,54 @@ function fillSelect(select, items, emptyLabel) {
     option.value = item.value ?? item;
     option.textContent = item.label ?? item;
     select.appendChild(option);
+  }
+}
+
+function sortVideoFilesForPlayback(items) {
+  const list = Array.isArray(items) ? [...items] : [];
+  const nameOf = (item) => String((item?.value ?? item?.label ?? item) || '');
+  const rankOf = (item) => {
+    const name = nameOf(item).toLowerCase();
+    if (name.includes('with_audio') || name.includes('final')) return 0;
+    if (name.includes('silent')) return 9;
+    return 4;
+  };
+  return list.sort((a, b) => {
+    const rank = rankOf(a) - rankOf(b);
+    if (rank !== 0) return rank;
+    return nameOf(a).localeCompare(nameOf(b));
+  });
+}
+
+function fillVideoSelect(select, items, emptyLabel) {
+  if (!select) {
+    return;
+  }
+  const previousValue = select.value;
+  const sortedItems = sortVideoFilesForPlayback(items);
+  fillSelect(select, sortedItems, emptyLabel);
+  const values = sortedItems.map((item) => String((item?.value ?? item) || ''));
+  if (previousValue && values.includes(previousValue) && !previousValue.toLowerCase().includes('silent')) {
+    select.value = previousValue;
+  } else if (values.length) {
+    select.value = values[0];
+  }
+}
+
+function syncVideoPreviewToSelection() {
+  if (!videoPreview || !videoFileSelect) {
+    return;
+  }
+  const filename = String(videoFileSelect.value || '').trim();
+  if (!filename) {
+    videoPreview.pause();
+    videoPreview.removeAttribute('src');
+    videoPreview.load();
+    return;
+  }
+  const nextUrl = buildVideoPreviewUrl(filename);
+  if (videoPreview.src !== `${window.location.origin}${nextUrl}`) {
+    videoPreview.src = nextUrl;
   }
 }
 
@@ -1132,8 +1183,9 @@ async function openProjectWorkspace(projectId) {
   }
   fillSelect(textFileSelect, ((data.preload?.text_files?.files) || []).map((f) => f.name), 'No text files');
   fillSelect(audioFileSelect, data.preload?.media_files?.audio_files || [], 'No audio files');
-  fillSelect(videoFileSelect, data.preload?.media_files?.video_files || [], 'No video files');
-  fillSelect(videoOutputSelect, data.preload?.media_files?.video_files || [], 'No video files');
+  fillVideoSelect(videoFileSelect, data.preload?.media_files?.video_files || [], 'No video files');
+  fillVideoSelect(videoOutputSelect, data.preload?.media_files?.video_files || [], 'No video files');
+  syncVideoPreviewToSelection();
   await loadSessionFiles();
   projectContextOpened = true;
   updateProjectGateUi();
@@ -1174,8 +1226,9 @@ async function loadSourceMedia() {
   const res = await fetch(`/api/files/source-media${suffix}`);
   const data = await res.json();
   fillSelect(audioFileSelect, data.audio_files || [], 'No audio files');
-  fillSelect(videoFileSelect, data.video_files || [], 'No video files');
-  fillSelect(videoOutputSelect, data.video_files || [], 'No video files');
+  fillVideoSelect(videoFileSelect, data.video_files || [], 'No video files');
+  fillVideoSelect(videoOutputSelect, data.video_files || [], 'No video files');
+  syncVideoPreviewToSelection();
   audioUrlVersion = Date.now();
 }
 
@@ -1371,7 +1424,7 @@ function buildRunAllPayload() {
     video_gemini_prompt_template: videoConfig.gemini_prompt_template,
     video_render_with_audio: true,
     video_merge_audio: true,
-    video_output_name: 'story_silent.mp4',
+    video_output_name: 'story_render.mp4',
   };
 }
 
@@ -1813,7 +1866,7 @@ async function openChromeForStoryCrawl(storyUrl) {
     setStatus('Ports list is empty.');
     return false;
   }
-  const result = await runJson('/api/gemini/chrome-pool/open', {
+  const result = await runJson('/api/browser/chrome-pool/open', {
     ports,
     user_data_root: 'D:\\chrome-gemini-profile-pool',
     url: cleanUrl,
@@ -2490,7 +2543,7 @@ runVideoOnlyBtn?.addEventListener('click', async () => {
   const mergeResult = await runJson('/api/pipeline/video/merge', {
     project_id: activeProjectId,
     session_id: activeSessionId,
-    silent_video_name: selectedVideo || 'story_silent.mp4',
+    silent_video_name: selectedVideo || 'story_render.mp4',
     output_name: 'final_story.mp4',
   }, 'Merge Audio into Video');
   if (mergeResult.ok) {
@@ -3155,20 +3208,7 @@ downloadVideoBtn.addEventListener('click', () => {
 });
 
 videoFileSelect?.addEventListener('change', () => {
-  if (!videoPreview) {
-    return;
-  }
-  const filename = String(videoFileSelect?.value || '').trim();
-  if (!filename) {
-    videoPreview.pause();
-    videoPreview.removeAttribute('src');
-    videoPreview.load();
-    return;
-  }
-  const nextUrl = buildVideoPreviewUrl(filename);
-  if (videoPreview.src !== `${window.location.origin}${nextUrl}`) {
-    videoPreview.src = nextUrl;
-  }
+  syncVideoPreviewToSelection();
 });
 
 videoRefreshBtn?.addEventListener('click', async () => {
@@ -3229,7 +3269,7 @@ videoMergeBtn?.addEventListener('click', async () => {
   const payload = {
     project_id: activeProjectId,
     session_id: activeSessionId,
-    silent_video_name: selectedVideo || 'story_silent.mp4',
+    silent_video_name: selectedVideo || 'story_render.mp4',
     output_name: 'final_story.mp4',
   };
   const result = await runJson('/api/pipeline/video/merge', payload, 'Merge Video And Audio');

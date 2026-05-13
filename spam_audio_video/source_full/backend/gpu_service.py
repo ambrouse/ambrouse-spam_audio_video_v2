@@ -144,7 +144,39 @@ class GpuStatusService:
 
     def _audio_runtime_info(self) -> dict:
         proc = getattr(self.audio_service, "_worker_proc", None)
-        return {
+        info = {
             "worker_running": bool(proc is not None and proc.poll() is None),
             "selected_model": getattr(self.audio_service, "model_key", ""),
         }
+        try:
+            python_exec = str(self.audio_service._pick_python())  # pylint: disable=protected-access
+            info["python"] = python_exec
+            result = subprocess.run(
+                [
+                    python_exec,
+                    "-c",
+                    (
+                        "import json, sys\n"
+                        "payload={'python_version': sys.version.split()[0], 'executable': sys.executable}\n"
+                        "try:\n"
+                        " import torch\n"
+                        " payload['torch']={'installed': True, 'version': getattr(torch, '__version__', ''), "
+                        "'cuda_available': bool(torch.cuda.is_available()), "
+                        "'cuda_version': getattr(torch.version, 'cuda', None), "
+                        "'device_count': int(torch.cuda.device_count()) if torch.cuda.is_available() else 0}\n"
+                        "except Exception as exc:\n"
+                        " payload['torch']={'installed': False, 'error': str(exc), 'cuda_available': False}\n"
+                        "print(json.dumps(payload, ensure_ascii=False))\n"
+                    ),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                info.update(json.loads(result.stdout.strip()))
+            elif result.stderr.strip():
+                info["runtime_probe_error"] = result.stderr.strip()[-1200:]
+        except Exception as exc:
+            info["runtime_probe_error"] = str(exc)
+        return info

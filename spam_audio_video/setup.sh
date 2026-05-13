@@ -9,7 +9,7 @@ mkdir -p "$LOG_DIR"
 SETUP_LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 
 STEP_INDEX=0
-STEP_TOTAL=9
+STEP_TOTAL=10
 STEP_TASK_DONE=0
 STEP_TASK_TOTAL=1
 STEP_TITLE=""
@@ -204,11 +204,48 @@ run_quiet_or_warn() {
   step_tick
 }
 
+ask_yes_no() {
+  local prompt="$1"
+  local default="${2:-n}"
+  local suffix="[y/N]"
+  local answer
+  if [[ "${default,,}" == "y" ]]; then
+    suffix="[Y/n]"
+  fi
+  if [[ "${SETUP_ASSUME_YES:-0}" == "1" || "${CI:-0}" == "1" ]]; then
+    echo "$prompt $suffix -> yes (SETUP_ASSUME_YES/CI)" >>"$SETUP_LOG"
+    return 0
+  fi
+  while true; do
+    printf "%s %s " "$prompt" "$suffix"
+    if ! read -r answer; then
+      answer="$default"
+    fi
+    answer="${answer:-$default}"
+    case "${answer,,}" in
+      y|yes) return 0 ;;
+      n|no) return 1 ;;
+      *) echo "Please answer y or n." ;;
+    esac
+  done
+}
+
+is_windows_host() {
+  [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OS" == "Windows_NT" ]]
+}
+
+candidate_exists() {
+  local py_cmd="$1"
+  eval "$py_cmd -c \"import sys\"" >/dev/null 2>&1
+}
+
 pick_python_with_ensurepip() {
   local candidates=(
     "py -3.12"
     "./auto_text_to_voice/VieNeu-TTS/.venv-win/Scripts/python.exe"
     "./auto_text_to_voice/VieNeu-TTS/.venv/Scripts/python.exe"
+    "py -3.11"
+    "py -3.10"
     "py -3"
     "python"
     "python3"
@@ -223,9 +260,89 @@ pick_python_with_ensurepip() {
   return 1
 }
 
+pick_python_exact_minor() {
+  local wanted="$1"
+  local candidates=(
+    "py -${wanted}"
+    "python${wanted}"
+    "python"
+    "python3"
+  )
+  local candidate
+  for candidate in "${candidates[@]}"; do
+    if eval "$candidate -c \"import ensurepip, sys; raise SystemExit(0 if f'{sys.version_info.major}.{sys.version_info.minor}' == '${wanted}' else 1)\"" >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
 python_version_tuple() {
   local py_cmd="$1"
   eval "$py_cmd -c \"import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')\""
+}
+
+python_executable() {
+  local py_cmd="$1"
+  eval "$py_cmd -c \"import sys; print(sys.executable)\"" 2>/dev/null || printf "%s" "$py_cmd"
+}
+
+install_python_312_windows() {
+  if ! is_windows_host; then
+    return 1
+  fi
+  if ! command -v winget >/dev/null 2>&1 && ! command -v winget.exe >/dev/null 2>&1; then
+    echo "[ERROR] Python 3.12 not found and winget is unavailable for automatic install."
+    return 1
+  fi
+  local winget_cmd="winget"
+  if ! command -v winget >/dev/null 2>&1 && command -v winget.exe >/dev/null 2>&1; then
+    winget_cmd="winget.exe"
+  fi
+  if ! ask_yes_no "Python 3.12 is required for Windows TTS. Install Python 3.12 with winget now?" "y"; then
+    return 1
+  fi
+  if ! run_quiet "Install Python 3.12" "$winget_cmd" install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements; then
+    echo "[ERROR] Failed to install Python 3.12 via winget."
+    tail -n 80 "$SETUP_LOG" || true
+    return 1
+  fi
+  hash -r 2>/dev/null || true
+  return 0
+}
+
+runtime_inventory() {
+  {
+    echo "===== Runtime inventory ====="
+    echo "OSTYPE=${OSTYPE:-}"
+    echo "OS=${OS:-}"
+    echo "PATH=$PATH"
+    for candidate in "py -3.12" "py -3.11" "py -3.10" "py -3" "python" "python3"; do
+      if candidate_exists "$candidate"; then
+        local version exe torch_info
+        version="$(python_version_tuple "$candidate" 2>/dev/null || true)"
+        exe="$(python_executable "$candidate" 2>/dev/null || true)"
+        torch_info="$(eval "$candidate - <<'PY'
+try:
+    import torch
+    print(f'torch={torch.__version__}, cuda={torch.cuda.is_available()}, cuda_version={getattr(torch.version, 'cuda', None)}')
+except Exception as exc:
+    print(f'torch_missing={exc}')
+PY" 2>/dev/null || true)"
+        echo "Python candidate: $candidate | version=$version | exe=$exe | $torch_info"
+      else
+        echo "Python candidate: $candidate | not found"
+      fi
+    done
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      echo "nvidia-smi: available"
+      nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader 2>/dev/null || true
+    else
+      echo "nvidia-smi: not found"
+    fi
+    echo "============================="
+  } >>"$SETUP_LOG"
 }
 
 http_ok() {
@@ -312,10 +429,72 @@ ensure_vieneu_venv_link() {
   ln -s "$target_dir" "$link_dir"
 }
 
+validate_vieneu_runtime() {
+  local venv_py="$1"
+  local tts_root="$2"
+  if [[ ! -x "$venv_py" ]]; then
+    return 1
+  fi
+  "$venv_py" - <<PY >>"$SETUP_LOG" 2>&1
+import sys
+sys.path.insert(0, r"${tts_root}/src")
+import numpy
+import soundfile
+import torch
+import voxcpm
+import vieneu
+print("VieNeu runtime OK")
+print("python=", sys.executable)
+print("torch=", torch.__version__)
+print("cuda_available=", torch.cuda.is_available())
+print("cuda_version=", torch.version.cuda)
+if torch.cuda.is_available():
+    assert torch.version.cuda is not None
+PY
+}
+
+validate_web_runtime() {
+  local web_py="$1"
+  if [[ ! -x "$web_py" ]]; then
+    return 1
+  fi
+  "$web_py" - <<'PY' >>"$SETUP_LOG" 2>&1
+import sys
+import fastapi
+import uvicorn
+import httpx
+import pydantic
+import playwright
+import imageio_ffmpeg
+print("Web runtime OK")
+print("python=", sys.executable)
+PY
+}
+
 ensure_9router() {
   if ! command -v 9router >/dev/null 2>&1; then
     if ! command -v npm >/dev/null 2>&1; then
-      echo "[ERROR] npm is required to install 9router. Install Node.js/npm, then rerun setup.sh."
+      if is_windows_host && (command -v winget >/dev/null 2>&1 || command -v winget.exe >/dev/null 2>&1); then
+        if ask_yes_no "npm is required for 9router but was not found. Install Node.js LTS with winget now?" "y"; then
+          local winget_cmd="winget"
+          if ! command -v winget >/dev/null 2>&1 && command -v winget.exe >/dev/null 2>&1; then
+            winget_cmd="winget.exe"
+          fi
+          if ! run_quiet "Install Node.js LTS" "$winget_cmd" install -e --id OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements; then
+            echo "[ERROR] Failed to install Node.js/npm via winget."
+            tail -n 80 "$SETUP_LOG" || true
+            exit 1
+          fi
+          hash -r 2>/dev/null || true
+        fi
+      fi
+      if ! command -v npm >/dev/null 2>&1; then
+        echo "[ERROR] npm is required to install 9router. Install Node.js/npm, then rerun setup.sh."
+        exit 1
+      fi
+    fi
+    if ! ask_yes_no "9router is missing. Install it globally with npm now?" "y"; then
+      echo "[ERROR] 9router install declined."
       exit 1
     fi
     if ! run_quiet "Install 9router" npm install -g 9router; then
@@ -437,11 +616,10 @@ ensure_vieneu_runtime() {
   local requested_device="${SETUP_TTS_DEVICE:-cpu}"
   local system_py_version
 
-  system_py_version="$(python_version_tuple "$SYSTEM_PYTHON")"
-  if [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OS" == "Windows_NT" ]]; then
+  system_py_version="$(python_version_tuple "$TTS_SYSTEM_PYTHON")"
+  if is_windows_host; then
     if [[ "$system_py_version" != "3.12" ]]; then
-      echo "[ERROR] Windows TTS setup needs Python 3.12 for the prebuilt llama-cpp/VoxCPM wheels."
-      echo "[HINT] Install Python 3.12, then rerun: bash setup.sh"
+      echo "[ERROR] Windows TTS setup needs Python 3.12 for the prebuilt llama-cpp/VoxCPM wheels, got ${system_py_version} from ${TTS_SYSTEM_PYTHON}."
       exit 1
     fi
   fi
@@ -451,11 +629,44 @@ ensure_vieneu_runtime() {
     venv_py="${venv_dir}/bin/python"
   fi
 
+  if [[ -x "$venv_py" ]] && is_windows_host; then
+    local venv_py_version
+    venv_py_version="$("$venv_py" -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')" 2>/dev/null || true)"
+    if [[ "$venv_py_version" != "3.12" ]]; then
+      echo "[WARN] Existing VieNeu runtime uses Python ${venv_py_version:-unknown}, but Windows TTS requires Python 3.12: $venv_py" >>"$SETUP_LOG"
+      if ! ask_yes_no "VieNeu/TTS venv was built with Python ${venv_py_version:-unknown}. Recreate it with Python 3.12 now?" "y"; then
+        echo "[ERROR] VieNeu/TTS runtime recreate declined."
+        exit 1
+      fi
+      remove_vieneu_venv_path "$venv_dir"
+      remove_vieneu_venv_path "$compat_venv_dir"
+      venv_py="${venv_dir}/Scripts/python.exe"
+    fi
+  fi
+
+  if [[ -x "$venv_py" ]] && validate_vieneu_runtime "$venv_py" "$tts_root"; then
+    echo "Reusing valid VieNeu runtime: $venv_py" >>"$SETUP_LOG"
+    PIPELINE_PY="$venv_py"
+    return 0
+  fi
+
+  if [[ -x "$venv_py" ]]; then
+    echo "[WARN] Existing VieNeu runtime is missing packages or failed validation: $venv_py" >>"$SETUP_LOG"
+    if ! ask_yes_no "VieNeu/TTS runtime exists but is incomplete. Repair/install dependencies now?" "y"; then
+      echo "[ERROR] VieNeu/TTS runtime repair declined."
+      exit 1
+    fi
+  fi
+
   if [[ ! -x "$venv_py" ]]; then
+    if ! ask_yes_no "VieNeu/TTS Python environment is missing. Create and install it now?" "y"; then
+      echo "[ERROR] VieNeu/TTS runtime install declined."
+      exit 1
+    fi
     echo "  $(icon run) Creating VieNeu virtual environment..."
     remove_vieneu_venv_path "$venv_dir"
     remove_vieneu_venv_path "$compat_venv_dir"
-    run_quiet_or_fail "Create VieNeu venv" bash -lc "$SYSTEM_PYTHON -m venv \"$venv_dir\""
+    run_quiet_or_fail "Create VieNeu venv" bash -lc "$TTS_SYSTEM_PYTHON -m venv \"$venv_dir\""
     ensure_vieneu_venv_link "$compat_venv_dir" "$venv_dir"
     if [[ -f "${venv_dir}/Scripts/python.exe" ]]; then
       venv_py="${venv_dir}/Scripts/python.exe"
@@ -496,17 +707,7 @@ ensure_vieneu_runtime() {
     run_quiet_or_fail "Install CUDA runtime deps" "$venv_py" -m pip install --upgrade onnxruntime-gpu neucodec transformers accelerate --progress-bar on
   fi
 
-  if ! "$venv_py" - <<PY >/dev/null 2>&1
-import sys
-sys.path.insert(0, r"${tts_root}/src")
-import torch
-import numpy
-import soundfile
-import vieneu
-if torch.cuda.is_available():
-    assert torch.version.cuda is not None
-PY
-  then
+  if ! validate_vieneu_runtime "$venv_py" "$tts_root"; then
     echo "[ERROR] VieNeu runtime validation failed."
     tail -n 80 "$SETUP_LOG" || true
     exit 1
@@ -539,24 +740,62 @@ PY
   return 1
 }
 
-SYSTEM_PYTHON="$(pick_python_with_ensurepip || true)"
-if [[ -z "$SYSTEM_PYTHON" ]]; then
-  echo "[ERROR] Python 3.10+ with ensurepip is not available (tried: venv-win, venv, py -3, python, python3)."
-  echo "[HINT] Install Python from python.org or enable Windows 'py' launcher."
+print_header
+step "Inspect OS/Python/GPU runtimes" 1
+runtime_inventory
+step_tick
+
+WEB_SYSTEM_PYTHON="$(pick_python_with_ensurepip || true)"
+if [[ -z "$WEB_SYSTEM_PYTHON" ]]; then
+  if is_windows_host && install_python_312_windows; then
+    WEB_SYSTEM_PYTHON="$(pick_python_with_ensurepip || true)"
+  fi
+fi
+if [[ -z "$WEB_SYSTEM_PYTHON" ]]; then
+  echo "[ERROR] Python 3.10+ with ensurepip is not available (tried: py -3.12, py -3.11, py -3.10, py -3, python, python3)."
+  echo "[HINT] Install Python 3.10+ or allow setup to install Python 3.12 on Windows."
   exit 1
 fi
 
-print_header
+TTS_SYSTEM_PYTHON=""
+if is_windows_host; then
+  TTS_SYSTEM_PYTHON="$(pick_python_exact_minor "3.12" || true)"
+  if [[ -z "$TTS_SYSTEM_PYTHON" ]] && install_python_312_windows; then
+    TTS_SYSTEM_PYTHON="$(pick_python_exact_minor "3.12" || true)"
+  fi
+else
+  TTS_SYSTEM_PYTHON="$(pick_python_with_ensurepip || true)"
+fi
+if [[ -z "$TTS_SYSTEM_PYTHON" ]]; then
+  echo "[ERROR] Cannot find a suitable Python for TTS runtime."
+  if is_windows_host; then
+    echo "[HINT] Windows TTS needs Python 3.12. Install it, or answer y when setup asks to install via winget."
+  fi
+  exit 1
+fi
+
 step "Select Python runtime" 1
+{
+  echo "Selected WEB_SYSTEM_PYTHON=$WEB_SYSTEM_PYTHON"
+  echo "Selected WEB executable=$(python_executable "$WEB_SYSTEM_PYTHON")"
+  echo "Selected WEB version=$(python_version_tuple "$WEB_SYSTEM_PYTHON")"
+  echo "Selected TTS_SYSTEM_PYTHON=$TTS_SYSTEM_PYTHON"
+  echo "Selected TTS executable=$(python_executable "$TTS_SYSTEM_PYTHON")"
+  echo "Selected TTS version=$(python_version_tuple "$TTS_SYSTEM_PYTHON")"
+} >>"$SETUP_LOG"
 step_tick
 
 recreate_venv() {
   rm -rf .venv
-  eval "$SYSTEM_PYTHON -m venv .venv"
+  eval "$WEB_SYSTEM_PYTHON -m venv .venv"
 }
 
 if [[ ! -d ".venv" ]]; then
   step "Create web virtual environment" 1
+  if ! ask_yes_no "Web Python environment .venv is missing. Create it now?" "y"; then
+    echo "[ERROR] Web runtime creation declined."
+    exit 1
+  fi
   recreate_venv
   step_tick
 else
@@ -572,6 +811,10 @@ fi
 
 if [[ ! -x "$WEB_PY" ]]; then
   echo "  $(icon run) Existing .venv invalid, recreating..."
+  if ! ask_yes_no "Existing web .venv is invalid. Recreate it now?" "y"; then
+    echo "[ERROR] Web runtime recreate declined."
+    exit 1
+  fi
   recreate_venv
   if [[ -f ".venv/Scripts/python.exe" ]]; then
     WEB_PY=".venv/Scripts/python.exe"
@@ -580,10 +823,20 @@ if [[ ! -x "$WEB_PY" ]]; then
   fi
 fi
 
-step "Install web dependencies" 3
-run_quiet_or_fail "Upgrade web pip" "$WEB_PY" -m pip install --upgrade pip --progress-bar on
-run_quiet_or_fail "Install web requirements" "$WEB_PY" -m pip install -r source_full/requirements.txt --progress-bar on
-run_quiet_or_warn "Install Playwright Chromium" "$WEB_PY" -m playwright install chromium
+if validate_web_runtime "$WEB_PY"; then
+  step "Validate web dependencies" 1
+  echo "Reusing valid web runtime: $WEB_PY" >>"$SETUP_LOG"
+  step_tick
+else
+  step "Install web dependencies" 3
+  if ! ask_yes_no "Web dependencies are missing or incomplete. Install them into .venv now?" "y"; then
+    echo "[ERROR] Web dependency install declined."
+    exit 1
+  fi
+  run_quiet_or_fail "Upgrade web pip" "$WEB_PY" -m pip install --upgrade pip --progress-bar on
+  run_quiet_or_fail "Install web requirements" "$WEB_PY" -m pip install -r source_full/requirements.txt --progress-bar on
+  run_quiet_or_warn "Install Playwright Chromium" "$WEB_PY" -m playwright install chromium
+fi
 
 step "Ensure 9router runtime" 1
 ensure_9router
@@ -621,4 +874,8 @@ echo "Full logs: $SETUP_LOG" >>"$SETUP_LOG"
 step_tick
 printf "\n%s URL: %shttp://localhost:%s%s\n" "$(icon rocket)" "$C_BOLD" "$PORT" "$C_RESET"
 printf "%s Log: %s\n\n" "$(icon info)" "$SETUP_LOG"
+if [[ "${SETUP_INSTALL_ONLY:-0}" == "1" ]]; then
+  echo "SETUP_INSTALL_ONLY=1, setup completed without starting web controller." >>"$SETUP_LOG"
+  exit 0
+fi
 PORT="$PORT" "$WEB_PY" source_full/run_web.py

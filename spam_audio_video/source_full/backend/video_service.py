@@ -270,7 +270,7 @@ class VideoPipelineService:
         should_stop: Callable[[], bool] | None = None,
     ) -> dict:
         cfg = self._build_config(payload)
-        output_name = str(payload.get("output_name") or "story_silent.mp4")
+        output_name = str(payload.get("output_name") or "story_render.mp4")
         result = self.pipeline.render_video(
             project_id=project_id,
             session_id=session_id,
@@ -293,7 +293,7 @@ class VideoPipelineService:
         )
         return result
 
-    def merge(self, project_id: str, session_id: str, silent_video_name: str = "story_silent.mp4", output_name: str = "final_story.mp4") -> dict:
+    def merge(self, project_id: str, session_id: str, silent_video_name: str = "story_render.mp4", output_name: str = "final_story.mp4") -> dict:
         result = self.pipeline.merge_audio(
             project_id=project_id,
             session_id=session_id,

@@ -1193,9 +1193,8 @@ class ConvertPipelineService:
                 "collect": collect_result,
             }
         gemini_browser = None
-        if provider in {"gemini_web", "web"}:
-            # Legacy compatibility: rewrite runtime is URL-based now.
-            provider = "openai_compat"
+        if provider not in {"bridge_gemini", "fake"}:
+            provider = "bridge_gemini"
         rewrite_result = self.rewrite(
             project_id=resolved_project_id,
             provider=provider,

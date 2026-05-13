@@ -33,6 +33,8 @@ class AudioPipelineService:
         self.source_audio_root = self.repo_root / "source_full" / "audio"
         self.source_video_root = self.repo_root / "source_full" / "video"
         self.worker_script = self.auto_ttv_root / "vieneu_worker.py"
+        self.worker_stderr_path = self.repo_root / "projects_workspace" / "runtime" / "tts_worker_stderr.log"
+        self._worker_stderr_handle = None
         self._worker_proc: subprocess.Popen[str] | None = None
         self._worker_io_lock = threading.Lock()
         self.model_key = "voxcpm_vn"
@@ -358,12 +360,19 @@ class AudioPipelineService:
 
     def _start_worker(self) -> None:
         python_exec = self._pick_python()
+        if self._worker_stderr_handle is not None:
+            try:
+                self._worker_stderr_handle.close()
+            except Exception:
+                pass
+        self.worker_stderr_path.parent.mkdir(parents=True, exist_ok=True)
+        self._worker_stderr_handle = self.worker_stderr_path.open("a", encoding="utf-8", errors="replace")
         self._worker_proc = subprocess.Popen(
             [str(python_exec), str(self.worker_script.resolve())],
             cwd=str(self.repo_root),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
+            stderr=self._worker_stderr_handle,
             text=True,
             encoding="utf-8",
             errors="replace",
@@ -386,7 +395,9 @@ class AudioPipelineService:
             while True:
                 line = self._worker_proc.stdout.readline()
                 if not line:
-                    raise RuntimeError("Worker exited unexpectedly.")
+                    stderr_tail = self._read_worker_stderr_tail()
+                    detail = f"Worker exited unexpectedly. {stderr_tail}" if stderr_tail else "Worker exited unexpectedly."
+                    raise RuntimeError(detail)
                 line = line.strip()
                 if not line:
                     continue
@@ -416,7 +427,26 @@ class AudioPipelineService:
                     pass
             finally:
                 self._worker_proc = None
+                if self._worker_stderr_handle is not None:
+                    try:
+                        self._worker_stderr_handle.close()
+                    except Exception:
+                        pass
+                    self._worker_stderr_handle = None
         return {"ok": True, "message": "Worker runtime reset. Next run will load fresh model/reference."}
+
+    def _read_worker_stderr_tail(self, max_chars: int = 1200) -> str:
+        try:
+            if self._worker_stderr_handle is not None:
+                self._worker_stderr_handle.flush()
+            if not self.worker_stderr_path.exists():
+                return ""
+            text = self.worker_stderr_path.read_text(encoding="utf-8", errors="replace").strip()
+            if not text:
+                return ""
+            return text[-max_chars:]
+        except Exception:
+            return ""
 
     def _resolve_session_tts_inputs(self, project_id: str, session_id: str) -> Path:
         source_dir = self.project_store.session_dir(project_id, session_id) / "tts_inputs"
@@ -745,6 +775,24 @@ class AudioPipelineService:
         video_files = []
         audio_exts = {".wav", ".mp3", ".flac", ".m4a", ".ogg"}
         video_exts = {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}
+
+        def sort_video_paths(paths: list[Path]) -> list[str]:
+            def key(path: Path) -> tuple[int, float, str]:
+                name = path.name.lower()
+                if "with_audio" in name or "final" in name:
+                    rank = 0
+                elif "silent" in name:
+                    rank = 9
+                else:
+                    rank = 4
+                try:
+                    mtime = -path.stat().st_mtime
+                except OSError:
+                    mtime = 0.0
+                return (rank, mtime, name)
+
+            return [p.name for p in sorted(paths, key=key)]
+
         if project_id and session_id:
             session_audio_dir = self._resolve_session_audio_dir(project_id, session_id)
             if session_audio_dir.exists():
@@ -755,11 +803,11 @@ class AudioPipelineService:
                 )
             session_video_dir = self._resolve_session_video_dir(project_id, session_id)
             if session_video_dir.exists():
-                video_files = sorted(
-                    p.name
+                video_files = sort_video_paths([
+                    p
                     for p in session_video_dir.iterdir()
                     if p.is_file() and p.suffix.lower() in video_exts
-                )
+                ])
         elif self.source_audio_root.exists():
             audio_files = sorted(
                 p.name
@@ -767,9 +815,9 @@ class AudioPipelineService:
                 if p.is_file() and p.suffix.lower() in audio_exts
             )
         if not video_files and self.source_video_root.exists():
-            video_files = sorted(
-                p.name
+            video_files = sort_video_paths([
+                p
                 for p in self.source_video_root.iterdir()
                 if p.is_file() and p.suffix.lower() in video_exts
-            )
+            ])
         return {"audio_files": audio_files, "video_files": video_files}

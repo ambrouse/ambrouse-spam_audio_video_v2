@@ -272,7 +272,7 @@ class RunAllRequest(ConvertFullRunRequest):
     video_gemini_prompt_template: str = ""
     video_render_with_audio: bool = True
     video_merge_audio: bool = True
-    video_output_name: str = "story_silent.mp4"
+    video_output_name: str = "story_render.mp4"
     video_encoder: str = "auto"
     video_preset: str = "quality"
     video_crf: int = 18
@@ -316,7 +316,7 @@ class VideoPipelineRequest(BaseModel):
     render_workers: int = 1
     render_with_audio: bool = True
     merge_audio: bool = True
-    output_name: str = "story_silent.mp4"
+    output_name: str = "story_render.mp4"
 
 
 class BridgeOpenRequest(BaseModel):
@@ -349,7 +349,7 @@ class VideoMergeRequest(BaseModel):
     job_id: str | None = None
     project_id: str
     session_id: str
-    silent_video_name: str = "story_silent.mp4"
+    silent_video_name: str = "story_render.mp4"
     output_name: str = "final_story.mp4"
 
 
@@ -1873,8 +1873,8 @@ def clear_session_video_images(payload: SessionAudioClearRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/gemini/chrome-pool/open")
-def open_gemini_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
+@app.post("/api/browser/chrome-pool/open")
+def open_browser_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
     try:
         return convert_service.open_gemini_chrome_pool(
             ports=payload.ports,
@@ -1887,8 +1887,8 @@ def open_gemini_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/gemini/chrome-pool/close")
-def close_gemini_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
+@app.post("/api/browser/chrome-pool/close")
+def close_browser_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
     try:
         return convert_service.close_gemini_chrome_pool(payload.ports)
     except ValueError as exc:
@@ -1897,16 +1897,16 @@ def close_gemini_chrome_pool(payload: GeminiChromePoolRequest) -> dict:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.get("/api/gemini/chrome-pool/status")
-def status_gemini_chrome_pool() -> dict:
+@app.get("/api/browser/chrome-pool/status")
+def status_browser_chrome_pool() -> dict:
     try:
         return convert_service.get_gemini_chrome_pool_status()
     except Exception as exc:  # pylint: disable=broad-except
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/gemini/chrome-pool/mark-login-ready")
-def mark_login_ready_gemini_chrome_pool(payload: GeminiChromePoolLoginRequest) -> dict:
+@app.post("/api/browser/chrome-pool/mark-login-ready")
+def mark_login_ready_browser_chrome_pool(payload: GeminiChromePoolLoginRequest) -> dict:
     try:
         return convert_service.mark_gemini_chrome_pool_login_ready(
             ports=payload.ports,

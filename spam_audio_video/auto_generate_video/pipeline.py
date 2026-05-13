@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import concurrent.futures
+import hashlib
 import json
 import math
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -19,19 +21,20 @@ from auto_convert_text.storage.project_store import ProjectStore
 
 
 DEFAULT_VIDEO_GEMINI_PROMPT_TEMPLATE = (
-    "B?n l? prompt engineer chuy?n vi?t prompt ?nh ?i?n ?nh manhua cho m? h?nh t?o ?nh.\n"
-    "Y?u c?u b?t bu?c:\n"
-    "1. Tr? v? CH? 1 d?ng prompt cu?i c?ng b?ng ti?ng Anh, kh?ng markdown, kh?ng gi?i th?ch.\n"
-    "2. Kh?ng tr? v? ?nh, link, markdown image, data url, html, ho?c file attachment.\n"
-    "3. Prompt ph?i ch? ??o r?: landscape 16:9, cinematic wide shot, ?u ti?n ?? n?t cao.\n"
-    "4. N?u r? nh?n v?t ch?nh, b? c?c ti?n-trung-h?u c?nh, ?nh s?ng, camera angle, mood.\n"
-    "4.1. Ch? m? t? xung ??t theo h??ng bi?u t??ng, kh?ng m? t? g?y s?c ho?c chi ti?t th??ng t?n c? th?.\n"
-    "5. B? sung negative cues: no text, no watermark, no logo, blurry, low quality, oversaturated, deformed hands.\n"
-    "5.1. Th?m safety cues: PG-13 fantasy tone, symbolic tension, elegant atmosphere, non-graphic storytelling.\n"
-    "6. ?? d?i 70-140 t?, kh?ng l?p l?i t?nh ti?t th?, ch? gi? chi ti?t gi?u h?nh ?nh.\n\n"
-    "B?i c?nh truy?n: {story_context}\n"
-    "Di?n bi?n c?n minh h?a:\n"
-    "{scene_text}\n"
+    'Bạn là prompt engineer chuyên viết prompt ảnh điện ảnh manhua cho mô hình tạo ảnh.\n'
+    'Yêu cầu bắt buộc:\n'
+    '1. Trả về CHỈ 1 dòng prompt cuối cùng bằng tiếng Anh, không markdown, không giải thích.\n'
+    '2. Không trả về ảnh, link, markdown image, data url, html, hoặc file attachment.\n'
+    '3. Prompt phải chỉ đạo rõ: landscape 16:9, cinematic wide shot, ưu tiên độ nét cao.\n'
+    '4. Nêu rõ nhân vật chính, bố cục tiền-trung-hậu cảnh, ánh sáng, camera angle, mood.\n'
+    '4.1. Chỉ mô tả xung đột theo hướng biểu tượng, không mô tả gây sốc hoặc chi tiết thương tổn cơ thể.\n'
+    '5. Bổ sung negative cues: no text, no watermark, no logo, blurry, low quality, oversaturated, deformed hands.\n'
+    '5.1. Thêm safety cues: PG-13 fantasy tone, symbolic tension, elegant atmosphere, non-graphic storytelling.\n'
+    '6. Độ dài 70-140 từ, không lặp lại tình tiết thô, chỉ giữ chi tiết giàu hình ảnh.\n'
+    '\n'
+    'Bối cảnh truyện: {story_context}\n'
+    'Diễn biến cần minh họa:\n'
+    '{scene_text}\n'
 )
 
 @dataclass
@@ -453,11 +456,11 @@ class VideoPipeline:
             (r"\b(?:death|dead|die|dying|corpse|severed)\b", "aftermath"),
             (r"\b(?:wound|wounded|injury|injured|torture|agonizing|agony|pain|tearing|ripped|writhing)\b", "hardship"),
             (r"\b(?:violent|violence|brutal|brutality)\b", "intense"),
-            (r"\bm?u me\b", "n?ng l??ng ??"),
-            (r"\bm?u\b", "n?ng l??ng ??"),
-            (r"\b(?:gi?t|ch?m|??m|t?n s?t|th?m s?t|tra t?n)\b", "??i ??u"),
-            (r"\b(?:ch?t|x?c|t? thi)\b", "h? qu?"),
-            (r"\b(?:?au ??n|?au nh?i|qu?n qu?i|x? to?c|x? r?ch)\b", "c?ng th?ng"),
+            ("\\bm\u00e1u me\\b", "n\u0103ng l\u01b0\u1ee3ng \u0111\u1ecf"),
+            ("\\bm\u00e1u\\b", "n\u0103ng l\u01b0\u1ee3ng \u0111\u1ecf"),
+            ("\\b(?:gi\u1ebft|ch\u00e9m|\u0111\u00e2m|t\u00e0n s\u00e1t|th\u1ea3m s\u00e1t|tra t\u1ea5n)\\b", "\u0111\u1ed1i \u0111\u1ea7u"),
+            ("\\b(?:ch\u1ebft|x\u00e1c|t\u1eed thi)\\b", "h\u1ec7 qu\u1ea3"),
+            ("\\b(?:\u0111au \u0111\u1edbn|\u0111au nh\u00f3i|qu\u1eb1n qu\u1ea1i|x\u00e9 to\u1ea1c|x\u00e9 r\u00e1ch)\\b", "c\u0103ng th\u1eb3ng"),
         ]
         for pattern, replacement in replacements:
             text = re.sub(pattern, replacement, text, flags=re.I)
@@ -476,7 +479,7 @@ class VideoPipeline:
         project_id: str,
         session_id: str,
         config: VideoPipelineConfig,
-        output_name: str = "story_silent.mp4",
+        output_name: str = "story_render.mp4",
         render_with_audio: bool = True,
         progress_callback: Callable[[dict], None] | None = None,
         should_stop: Callable[[], bool] | None = None,
@@ -488,18 +491,29 @@ class VideoPipeline:
         else:
             analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
 
-        image_files = self._collect_scene_images(dirs["images_dir"])
-        if not image_files:
+        source_image_files = self._collect_scene_images(dirs["images_dir"])
+        if not source_image_files:
             raise FileNotFoundError("No scene images found. Run image generation first.")
         if not self._check_ffmpeg():
             raise RuntimeError("ffmpeg is required for video render.")
 
         clips_dir = dirs["renders_dir"] / "clips"
         clips_dir.mkdir(parents=True, exist_ok=True)
+        raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 60.0)
+        per_scene_duration = raw_scene_duration if 45.0 <= raw_scene_duration <= 90.0 else 60.0
+        audio_seconds = float(analysis.get("total_audio_seconds") or 0.0)
+        transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
+        image_files = self._build_render_image_sequence(
+            source_image_files,
+            audio_seconds=audio_seconds,
+            per_scene_duration=per_scene_duration,
+            transition_seconds=transition_seconds,
+            project_id=project_id,
+            session_id=session_id,
+        )
         total = len(image_files)
-        per_scene_duration = max(3.0, float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 60.0))
-        # Keep a higher floor for better visual smoothness when users watch at 2x speed.
-        fps = max(30, min(60, int(config.fps)))
+        # Render at 60fps for smoother camera movement, especially after speeding up motion.
+        fps = 60
         width = max(512, int(config.width))
         height = max(512, int(config.height))
         # Use smooth start->end camera paths (seconds-based) instead of oscillation to avoid shake.
@@ -511,9 +525,8 @@ class VideoPipeline:
         cam_width = width * supersample
         cam_height = height * supersample
         base_zoom_start = 1.03 + motion * 0.08
-        speed_factor = 1.74
-        base_zoom_delta = (0.028 + motion * 0.07) * speed_factor
-        transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
+        speed_factor = 1.74 * 2.0
+        fixed_scroll_zoom = min(1.55, 1.34 + motion * 1.60)
         frames = max(1, int(math.ceil(per_scene_duration * fps)))
         gop = max(30, fps * 2)
         requested_encoder = str(config.video_encoder or "auto").strip().lower() or "auto"
@@ -526,17 +539,9 @@ class VideoPipeline:
         def _clamp(value: float, low: float, high: float) -> float:
             return max(low, min(high, value))
 
-        # Keep the camera path continuous across scene cuts to avoid "reset" feeling.
-        travel = min(0.34, (0.07 + motion * 0.52) * speed_factor)
-        lane_vectors: list[tuple[float, float]] = [
-            (0.85, -0.12),
-            (-0.78, 0.14),
-            (0.64, -0.54),
-            (-0.56, 0.48),
-        ]
-        prev_end_x = 0.44
-        prev_end_y = 0.52
-        prev_end_z = min(1.24, max(1.04, base_zoom_start + 0.02))
+        # Vertical-only scroll is steadier than diagonal crop movement on detailed generated art.
+        vertical_travel = min(0.86, (0.18 + motion * 0.62) * speed_factor)
+        center_x = 0.50
 
         clip_plan: list[dict] = []
         for index, image_path in enumerate(image_files, start=1):
@@ -544,49 +549,48 @@ class VideoPipeline:
                 raise RuntimeError("STOP_REQUESTED")
             clip_path = clips_dir / f"clip_{index:04d}.mp4"
 
-            # Scene i starts where scene i-1 ended, then keeps moving along the next lane vector.
-            lane = (index - 1) % len(lane_vectors)
-            vx, vy = lane_vectors[lane]
-            start_x = prev_end_x
-            start_y = prev_end_y
-            end_x = _clamp(start_x + vx * travel, 0.08, 0.86)
-            end_y = _clamp(start_y + vy * travel, 0.10, 0.82)
+            start_x = center_x
 
-            z0 = _clamp(prev_end_z, 1.03, 1.28)
-            z_step = base_zoom_delta * (0.92 if lane in {0, 2} else 0.58)
-            z1 = _clamp(z0 + z_step, 1.06, 1.32)
+            z0 = _clamp(fixed_scroll_zoom, 1.12, 1.30)
             dur = max(1.0, per_scene_duration)
-            u_expr = f"clip(t/{dur:.4f},0,1)"
-            # Quintic smoothstep: smoother velocity/acceleration than cubic.
-            ease_expr = f"(({u_expr})*({u_expr})*({u_expr})*(({u_expr})*(({u_expr})*6-15)+10))"
+            scroll_period = max(28.8, min(37.2, dur / 0.47))
+            scroll_center = 0.50
+            scroll_amplitude = min(0.46, max(0.34, vertical_travel * 0.62))
+            phase = -math.pi / 2 if index % 2 else math.pi / 2
+            scroll_y_expr = (
+                f"({scroll_center:.4f}+{scroll_amplitude:.4f}"
+                f"*sin(2*PI*t/{scroll_period:.4f}+{phase:.4f}))"
+            )
+            side_pad = max(60, int(width * 0.060))
+            panel_width = max(320, width - side_pad * 2)
+            panel_height = height
+            panel_cam_width = panel_width * supersample
+            panel_cam_height = panel_height * supersample
 
-            vf = (
-                # 1) For small source images, upscale and recover edge contrast before camera moves.
-                f"scale='if(lt(iw,{int(width * 0.9)}),min(iw*2,{int(width * 1.45)}),iw)':"
+            filter_complex = (
+                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},boxblur=lr=18:lp=2:cr=0:cp=0,"
+                f"eq=saturation=0.88:brightness=-0.025[bg];"
+                # For small source images, upscale and recover edge contrast before camera moves.
+                f"[0:v]scale='if(lt(iw,{int(width * 0.9)}),min(iw*2,{int(width * 1.45)}),iw)':"
                 f"'if(lt(ih,{int(height * 0.9)}),min(ih*2,{int(height * 1.45)}),ih)':"
                 f"flags=lanczos+accurate_rnd+full_chroma_int,"
                 f"hqdn3d=0.9:0.9:4.5:4.5,"
                 f"unsharp=5:5:0.38:5:5:0.0,"
-                f"scale={int(cam_width * overscan)}:{int(cam_height * overscan)}:force_original_aspect_ratio=increase,"
-                f"crop={cam_width}:{cam_height},"
-                f"scale=w='iw*({z0:.5f}+({z1:.5f}-{z0:.5f})*{ease_expr})':"
-                f"h='ih*({z0:.5f}+({z1:.5f}-{z0:.5f})*{ease_expr})':"
-                f"eval=frame,"
-                f"crop={cam_width}:{cam_height}:"
-                f"x='(in_w-out_w)*({start_x:.4f}+({end_x - start_x:.4f})*{ease_expr})':"
-                f"y='(in_h-out_h)*({start_y:.4f}+({end_y - start_y:.4f})*{ease_expr})',"
-                f"scale={width}:{height}:flags=lanczos+accurate_rnd+full_chroma_int,"
-                f"fps={fps},format=yuv420p"
+                f"scale={int(panel_cam_width * overscan * z0)}:{int(panel_cam_height * overscan * z0)}:force_original_aspect_ratio=increase,"
+                f"crop={panel_cam_width}:{panel_cam_height}:"
+                f"x='(in_w-out_w)*{start_x:.4f}':"
+                f"y='(in_h-out_h)*{scroll_y_expr}',"
+                f"scale={panel_width}:{panel_height}:flags=lanczos+accurate_rnd+full_chroma_int[fg];"
+                f"[bg][fg]overlay=x={side_pad}:y=0,"
+                f"fps={fps},format=yuv420p[vout]"
             )
 
-            prev_end_x = end_x
-            prev_end_y = end_y
-            prev_end_z = z1
             clip_plan.append({
                 "index": index,
                 "image_path": image_path,
                 "clip_path": clip_path,
-                "vf": vf,
+                "filter_complex": filter_complex,
             })
 
         clip_paths: list[Path] = []
@@ -606,8 +610,10 @@ class VideoPipeline:
                 "1",
                 "-i",
                 str(src_path),
-                "-vf",
-                str(plan["vf"]),
+                "-filter_complex",
+                str(plan["filter_complex"]),
+                "-map",
+                "[vout]",
                 "-t",
                 str(per_scene_duration),
                 "-an",
@@ -654,7 +660,7 @@ class VideoPipeline:
                         })
             clip_paths = [rendered[idx] for idx in sorted(rendered.keys())]
 
-        safe_name = (output_name or "story_silent.mp4").strip().replace("\\", "/").split("/")[-1]
+        safe_name = (output_name or "story_render.mp4").strip().replace("\\", "/").split("/")[-1]
         if not safe_name.lower().endswith(".mp4"):
             safe_name += ".mp4"
         silent_path = dirs["renders_dir"] / safe_name
@@ -701,6 +707,37 @@ class VideoPipeline:
                 str(silent_path),
             ])
             self._run_cmd(xfade_cmd, timeout=480)
+
+        overlay_audio_path: Path | None = None
+        if render_with_audio:
+            try:
+                overlay_audio_path = self._resolve_audio_for_merge(dirs)
+            except FileNotFoundError:
+                overlay_audio_path = None
+
+        visual_overlay = self._apply_visual_overlays(
+            input_path=silent_path,
+            reference_image=image_files[0],
+            audio_path=overlay_audio_path,
+            width=width,
+            height=height,
+            fps=fps,
+            gop=gop,
+            config=config,
+            selected_encoder=selected_encoder,
+            project_id=project_id,
+            session_id=session_id,
+            should_stop=should_stop,
+        )
+        if progress_callback:
+            progress_callback({
+                "stage": "video_render_visual_overlays",
+                "current": total,
+                "total": total,
+                "message": "Applied palette VFX, audio visualizer, and logo overlay.",
+                "files_done": total,
+                "preview_text": Path(visual_overlay.get("logo_path") or "").name or "palette VFX",
+            })
         if session_video_copy != silent_path:
             shutil.copy2(silent_path, session_video_copy)
 
@@ -709,10 +746,12 @@ class VideoPipeline:
         if render_with_audio:
             if should_stop and should_stop():
                 raise RuntimeError("STOP_REQUESTED")
-            audio_path = self._resolve_audio_for_merge(dirs)
+            audio_path = overlay_audio_path or self._resolve_audio_for_merge(dirs)
             audio_name = self._derive_audio_render_name(safe_name)
             rendered_with_audio = dirs["renders_dir"] / audio_name
             session_audio_copy = dirs["video_root"] / audio_name
+            audio_duration = self._read_wav_duration_seconds(audio_path)
+            audio_duration_args = ["-t", f"{audio_duration:.3f}"] if audio_duration > 0 else []
             audio_cmd = [
                 self.ffmpeg_bin,
                 "-y",
@@ -736,6 +775,7 @@ class VideoPipeline:
                 "2",
                 "-af",
                 "aresample=async=1:first_pts=0",
+                *audio_duration_args,
                 "-shortest",
                 "-movflags",
                 "+faststart",
@@ -764,6 +804,9 @@ class VideoPipeline:
             "render_with_audio_path": render_with_audio_path,
             "session_video_audio_path": session_video_audio_path,
             "scene_count": len(image_files),
+            "source_scene_count": len(source_image_files),
+            "per_image_duration_seconds": per_scene_duration,
+            "audio_duration_seconds": round(audio_seconds, 3),
             "fps": fps,
             "width": width,
             "height": height,
@@ -772,6 +815,7 @@ class VideoPipeline:
             "requested_video_encoder": requested_encoder,
             "video_encoder": selected_encoder,
             "gpu_fallback_used": selected_encoder == "libx264",
+            "visual_overlay": visual_overlay,
             "fallback_reason": (
                 "No supported FFmpeg GPU H.264 encoder was available."
                 if selected_encoder == "libx264" and requested_encoder in {"auto", "gpu", "nvenc", "qsv", "amf", "h264_nvenc", "h264_qsv", "h264_amf"}
@@ -789,7 +833,7 @@ class VideoPipeline:
         self,
         project_id: str,
         session_id: str,
-        silent_video_name: str = "story_silent.mp4",
+        silent_video_name: str = "story_render.mp4",
         output_name: str = "final_story.mp4",
     ) -> dict:
         dirs = self.ensure_session_video_dirs(project_id, session_id)
@@ -803,6 +847,8 @@ class VideoPipeline:
             safe_name += ".mp4"
         final_path = dirs["final_dir"] / safe_name
         session_video_copy = dirs["video_root"] / safe_name
+        audio_duration = self._read_wav_duration_seconds(audio_path)
+        audio_duration_args = ["-t", f"{audio_duration:.3f}"] if audio_duration > 0 else []
         cmd = [
             self.ffmpeg_bin,
             "-y",
@@ -826,6 +872,7 @@ class VideoPipeline:
             "2",
             "-af",
             "aresample=async=1:first_pts=0",
+            *audio_duration_args,
             "-shortest",
             "-movflags",
             "+faststart",
@@ -847,6 +894,381 @@ class VideoPipeline:
             encoding="utf-8",
         )
         return merge_manifest
+
+    @staticmethod
+    def _build_render_image_sequence(
+        source_image_files: list[Path],
+        audio_seconds: float,
+        per_scene_duration: float,
+        transition_seconds: float,
+        project_id: str,
+        session_id: str,
+    ) -> list[Path]:
+        if not source_image_files:
+            return []
+        usable_duration = max(1.0, per_scene_duration - max(0.0, transition_seconds))
+        if audio_seconds > 0:
+            target_count = max(1, int(math.ceil(max(0.0, audio_seconds - transition_seconds) / usable_duration)))
+        else:
+            target_count = len(source_image_files)
+        target_count = max(1, target_count)
+        seed_input = f"{project_id}|{session_id}|render-image-cycle"
+        rng = random.Random(int(hashlib.sha256(seed_input.encode("utf-8")).hexdigest()[:8], 16))
+        sequence: list[Path] = []
+        previous: Path | None = None
+        while len(sequence) < target_count:
+            batch = list(source_image_files)
+            rng.shuffle(batch)
+            if previous is not None and len(batch) > 1 and batch[0] == previous:
+                batch.append(batch.pop(0))
+            for item in batch:
+                sequence.append(item)
+                previous = item
+                if len(sequence) >= target_count:
+                    break
+        return sequence
+
+    def _apply_visual_overlays(
+        self,
+        input_path: Path,
+        reference_image: Path,
+        audio_path: Path | None,
+        width: int,
+        height: int,
+        fps: int,
+        gop: int,
+        config: VideoPipelineConfig,
+        selected_encoder: str,
+        project_id: str,
+        session_id: str,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> dict:
+        if should_stop and should_stop():
+            raise RuntimeError("STOP_REQUESTED")
+        logo_path = self._resolve_logo_path()
+        palette = self._sample_image_palette(reference_image)
+        dust_color, dust_alpha, spark_color = self._choose_vfx_palette(palette)
+        seed_input = f"{project_id}|{session_id}|{reference_image.name}"
+        particle_seed = int(hashlib.sha256(seed_input.encode("utf-8")).hexdigest()[:8], 16)
+        vfx_filter, dust_count, spark_count = self._build_particle_vfx_filter(
+            width,
+            height,
+            particle_seed,
+            dust_color,
+            dust_alpha,
+            spark_color,
+        )
+        audio_visualizer_enabled = bool(audio_path and audio_path.exists() and audio_path.is_file())
+        visualizer_color = palette.get("accent_hex") or spark_color
+
+        temp_path = input_path.with_name(f"{input_path.stem}_visual_tmp{input_path.suffix}")
+        if temp_path.exists():
+            temp_path.unlink()
+
+        cmd = [
+            self.ffmpeg_bin,
+            "-y",
+            "-i",
+            str(input_path),
+            "-f",
+            "lavfi",
+            "-i",
+            f"nullsrc=s={width}x{height}:r={fps}",
+        ]
+        audio_input_index: int | None = None
+        if audio_visualizer_enabled and audio_path:
+            audio_input_index = 2
+            cmd.extend(["-i", str(audio_path)])
+
+        filter_parts = [
+            "[0:v]format=rgba[base]",
+            f"[1:v]format=rgba,colorchannelmixer=aa=0,{vfx_filter}[vfx]",
+            "[base][vfx]overlay=shortest=1:format=auto[vfxed]",
+        ]
+        current_label = "vfxed"
+        if audio_input_index is not None:
+            bar_height = max(34, min(86, int(height * 0.075)))
+            bar_width = max(320, min(width - max(96, int(width * 0.16)), int(width * 0.78)))
+            bottom_gap = max(64, int(height * 0.105))
+            bar_y = max(0, height - bar_height - bottom_gap)
+            filter_parts.extend([
+                (
+                    f"[{audio_input_index}:a]aresample=48000,"
+                    f"showfreqs=s={bar_width}x{bar_height}:mode=bar:ascale=sqrt:fscale=log:"
+                    f"colors={visualizer_color}@0.82,"
+                    "format=rgba,colorkey=0x000000:0.08:0.12,"
+                    "colorchannelmixer=aa=0.64[audio_viz]"
+                ),
+                (
+                    f"[{current_label}][audio_viz]overlay=x=(main_w-overlay_w)/2:y={bar_y}:"
+                    "format=auto:eof_action=pass[visualized]"
+                ),
+            ])
+            current_label = "visualized"
+        if logo_path:
+            cmd.extend(["-i", str(logo_path)])
+            logo_input_index = 3 if audio_input_index is not None else 2
+            side_pad = max(60, int(width * 0.060))
+            bottom_margin = max(8, int(height * 0.014))
+            logo_width = max(28, min(int(side_pad * 0.68), int(width * 0.034)))
+            filter_parts.extend([
+                f"[{logo_input_index}:v]scale=w='if(gt(iw,{logo_width}),{logo_width},iw)':h=-1:flags=lanczos,format=rgba,colorchannelmixer=aa=0.82[logo]",
+                f"[{current_label}][logo]overlay=x=main_w-{side_pad}+({side_pad}-overlay_w)/2:y=main_h-overlay_h-{bottom_margin}:format=auto,format=yuv420p[vout]",
+            ])
+        else:
+            filter_parts.append(f"[{current_label}]format=yuv420p[vout]")
+
+        filter_script = temp_path.with_name(f"{temp_path.stem}_filter.txt")
+        filter_script.write_text(";".join(filter_parts), encoding="utf-8")
+        cmd.extend([
+            "-filter_complex_script",
+            str(filter_script),
+            "-map",
+            "[vout]",
+            "-an",
+            *self._build_video_encode_args(selected_encoder, gop, fps, config),
+            "-movflags",
+            "+faststart",
+            str(temp_path),
+        ])
+        try:
+            self._run_cmd(cmd, timeout=480)
+            temp_path.replace(input_path)
+        finally:
+            try:
+                filter_script.unlink()
+            except OSError:
+                pass
+        return {
+            "enabled": True,
+            "logo_path": self._safe_rel(logo_path) if logo_path else "",
+            "dust_particle_count": dust_count,
+            "spark_particle_count": spark_count,
+            "dust_color": dust_color,
+            "spark_color": spark_color,
+            "dust_alpha": round(dust_alpha, 3),
+            "audio_visualizer_enabled": audio_visualizer_enabled,
+            "audio_visualizer_color": visualizer_color,
+            "sampled_rgb": palette.get("average_rgb", []),
+            "dominant_rgb": palette.get("dominant_rgb", []),
+            "accent_rgb": palette.get("accent_rgb", []),
+        }
+
+    def _resolve_logo_path(self) -> Path | None:
+        logo_roots = [
+            self.repo_root / "media-logo" / "logo",
+            self.repo_root.parent / "media-logo" / "logo",
+        ]
+        exts = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
+        for root in logo_roots:
+            if not root.exists() or not root.is_dir():
+                continue
+            files = sorted(
+                (p for p in root.iterdir() if p.is_file() and p.suffix.lower() in exts),
+                key=lambda p: p.name.lower(),
+            )
+            if files:
+                return files[0]
+        return None
+
+    def _choose_vfx_palette(self, palette: dict) -> tuple[str, float, str]:
+        average_rgb = tuple(int(v) for v in (palette.get("average_rgb") or [156, 150, 138])[:3])
+        dominant_hex = str(palette.get("dominant_hex") or self._rgb_to_ffmpeg_hex(average_rgb))
+        accent_hex = str(palette.get("accent_hex") or dominant_hex)
+        lum = self._relative_luminance(average_rgb)
+        if lum > 205:
+            return "0x171513", 0.28, accent_hex
+        if lum > 150:
+            return "0xF2EEE4", 0.20, accent_hex
+        return "0xF7F7EE", 0.34, accent_hex
+
+    def _sample_average_rgb(self, image_path: Path) -> tuple[int, int, int]:
+        palette = self._sample_image_palette(image_path)
+        rgb = palette.get("average_rgb") or [156, 150, 138]
+        return (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+
+    def _sample_image_palette(self, image_path: Path) -> dict:
+        try:
+            result = subprocess.run(
+                [
+                    self.ffmpeg_bin,
+                    "-v",
+                    "error",
+                    "-i",
+                    str(image_path),
+                    "-vf",
+                    "scale=16:16:force_original_aspect_ratio=decrease,pad=16:16:(ow-iw)/2:(oh-ih)/2,format=rgb24",
+                    "-frames:v",
+                    "1",
+                    "-f",
+                    "rawvideo",
+                    "pipe:1",
+                ],
+                cwd=str(self.repo_root),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                timeout=60,
+                check=False,
+            )
+            if result.returncode == 0 and len(result.stdout) >= 3:
+                pixels = [
+                    (result.stdout[idx], result.stdout[idx + 1], result.stdout[idx + 2])
+                    for idx in range(0, len(result.stdout) - 2, 3)
+                ]
+                if pixels:
+                    return self._build_palette_from_pixels(pixels)
+        except Exception:
+            pass
+        fallback = (156, 150, 138)
+        fallback_hex = self._rgb_to_ffmpeg_hex(fallback)
+        return {
+            "average_rgb": [fallback[0], fallback[1], fallback[2]],
+            "dominant_rgb": [fallback[0], fallback[1], fallback[2]],
+            "accent_rgb": [fallback[0], fallback[1], fallback[2]],
+            "dominant_hex": fallback_hex,
+            "accent_hex": fallback_hex,
+        }
+
+    @staticmethod
+    def _build_palette_from_pixels(pixels: list[tuple[int, int, int]]) -> dict:
+        if not pixels:
+            fallback = (156, 150, 138)
+            fallback_hex = VideoPipeline._rgb_to_ffmpeg_hex(fallback)
+            return {
+                "average_rgb": [fallback[0], fallback[1], fallback[2]],
+                "dominant_rgb": [fallback[0], fallback[1], fallback[2]],
+                "accent_rgb": [fallback[0], fallback[1], fallback[2]],
+                "dominant_hex": fallback_hex,
+                "accent_hex": fallback_hex,
+            }
+
+        avg = tuple(int(sum(pixel[channel] for pixel in pixels) / len(pixels)) for channel in range(3))
+        buckets: dict[tuple[int, int, int], dict[str, float | int | tuple[int, int, int]]] = {}
+        for rgb in pixels:
+            if max(rgb) < 10:
+                continue
+            key = tuple((value // 32) * 32 + 16 for value in rgb)
+            bucket = buckets.setdefault(key, {"count": 0, "r": 0, "g": 0, "b": 0, "rgb": key})
+            bucket["count"] = int(bucket["count"]) + 1
+            bucket["r"] = int(bucket["r"]) + rgb[0]
+            bucket["g"] = int(bucket["g"]) + rgb[1]
+            bucket["b"] = int(bucket["b"]) + rgb[2]
+
+        if not buckets:
+            dominant = avg
+            accent = avg
+        else:
+            ranked = sorted(
+                buckets.values(),
+                key=lambda item: int(item["count"]),
+                reverse=True,
+            )
+            top = ranked[0]
+            dominant = (
+                int(int(top["r"]) / int(top["count"])),
+                int(int(top["g"]) / int(top["count"])),
+                int(int(top["b"]) / int(top["count"])),
+            )
+
+            def accent_score(item: dict[str, float | int | tuple[int, int, int]]) -> float:
+                count = int(item["count"])
+                rgb = (
+                    int(int(item["r"]) / count),
+                    int(int(item["g"]) / count),
+                    int(int(item["b"]) / count),
+                )
+                lum = VideoPipeline._relative_luminance(rgb)
+                saturation = (max(rgb) - min(rgb)) / 255.0
+                distance = math.sqrt(sum((rgb[idx] - dominant[idx]) ** 2 for idx in range(3))) / 441.7
+                light_bonus = 1.0 - abs(lum - 170.0) / 170.0
+                return (saturation * 1.45) + (distance * 0.75) + (light_bonus * 0.35) + min(count, 32) / 160.0
+
+            accent_item = max(ranked[: min(10, len(ranked))], key=accent_score)
+            accent_count = int(accent_item["count"])
+            accent = (
+                int(int(accent_item["r"]) / accent_count),
+                int(int(accent_item["g"]) / accent_count),
+                int(int(accent_item["b"]) / accent_count),
+            )
+
+        accent = VideoPipeline._soften_visualizer_rgb(accent, avg)
+        return {
+            "average_rgb": [avg[0], avg[1], avg[2]],
+            "dominant_rgb": [dominant[0], dominant[1], dominant[2]],
+            "accent_rgb": [accent[0], accent[1], accent[2]],
+            "dominant_hex": VideoPipeline._rgb_to_ffmpeg_hex(dominant),
+            "accent_hex": VideoPipeline._rgb_to_ffmpeg_hex(accent),
+        }
+
+    @staticmethod
+    def _soften_visualizer_rgb(rgb: tuple[int, int, int], average_rgb: tuple[int, int, int]) -> tuple[int, int, int]:
+        lum = VideoPipeline._relative_luminance(rgb)
+        mixed = tuple(int(rgb[idx] * 0.72 + average_rgb[idx] * 0.28) for idx in range(3))
+        if lum < 95:
+            mixed = tuple(min(255, int(value * 1.34 + 26)) for value in mixed)
+        elif lum > 218:
+            mixed = tuple(max(0, int(value * 0.82)) for value in mixed)
+        return mixed
+
+    @staticmethod
+    def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+        return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]
+
+    @staticmethod
+    def _rgb_to_ffmpeg_hex(rgb: tuple[int, int, int]) -> str:
+        return f"0x{max(0, min(255, int(rgb[0]))):02X}{max(0, min(255, int(rgb[1]))):02X}{max(0, min(255, int(rgb[2]))):02X}"
+
+    @staticmethod
+    def _build_particle_vfx_filter(
+        width: int,
+        height: int,
+        seed: int,
+        dust_color: str,
+        dust_alpha: float,
+        spark_color: str,
+    ) -> tuple[str, int, int]:
+        rng = random.Random(seed)
+        dust_count = max(48, min(86, int(width / 20)))
+        spark_count = max(14, min(32, int(width / 54)))
+        margin = max(30, int(height * 0.08))
+        parts: list[str] = []
+        for index in range(dust_count):
+            width_px = rng.choice([2, 2, 3, 3, 4])
+            height_px = rng.choice([5, 6, 8, 10, 12])
+            lane_width = width / dust_count
+            x0 = lane_width * (index + 0.5) + rng.uniform(-lane_width * 0.28, lane_width * 0.28)
+            y0 = (((index * 0.61803398875) % 1.0) * (height + margin * 2)) + rng.uniform(-margin * 0.28, margin * 0.28)
+            speed = rng.uniform(height * 0.012, height * 0.038)
+            sway = rng.uniform(width * 0.003, width * 0.014)
+            phase = rng.uniform(0.16, 0.42)
+            offset = rng.uniform(0.0, math.tau)
+            alpha = max(0.12, min(0.46, dust_alpha * rng.uniform(0.70, 1.18)))
+            x_expr = f"{x0:.3f}+sin(t*{phase:.4f}+{offset:.4f})*{sway:.3f}"
+            y_expr = f"mod({y0:.3f}+t*{speed:.4f}\\,h+{margin * 2})-{margin}"
+            parts.append(
+                f"drawbox=x='{x_expr}':y='{y_expr}':w={width_px}:h={height_px}:color={dust_color}@{alpha:.3f}:t=fill:replace=1"
+            )
+
+        lower_band = height * 0.56
+        side_safe = max(42, int(width * 0.045))
+        for index in range(spark_count):
+            lane = index / max(1, spark_count - 1)
+            side_bias = lane if index % 3 else rng.choice([rng.uniform(0.0, 0.18), rng.uniform(0.82, 1.0)])
+            x0 = side_safe + side_bias * max(1, width - side_safe * 2) + rng.uniform(-width * 0.018, width * 0.018)
+            y0 = lower_band + rng.random() * height * 0.36
+            rise = rng.uniform(height * 0.030, height * 0.088)
+            sway = rng.uniform(width * 0.002, width * 0.010)
+            phase = rng.uniform(0.55, 1.10)
+            offset = rng.uniform(0.0, math.tau)
+            width_px = rng.choice([2, 2, 3])
+            height_px = rng.choice([16, 20, 24, 30])
+            alpha = rng.uniform(0.32, 0.62)
+            x_expr = f"{x0:.3f}+sin(t*{phase:.4f}+{offset:.4f})*{sway:.3f}"
+            y_expr = f"mod({y0:.3f}-t*{rise:.4f}\\,h+{margin * 2})-{margin}"
+            parts.append(
+                f"drawbox=x='{x_expr}':y='{y_expr}':w={width_px}:h={height_px}:color={spark_color}@{alpha:.3f}:t=fill:replace=1"
+            )
+        return ",".join(parts), dust_count, spark_count
 
     def run_full(
         self,
@@ -1172,7 +1594,7 @@ class VideoPipeline:
 
     @staticmethod
     def _derive_audio_render_name(silent_name: str) -> str:
-        base = (silent_name or "story_silent.mp4").strip()
+        base = (silent_name or "story_render.mp4").strip()
         if not base.lower().endswith(".mp4"):
             base += ".mp4"
         stem = Path(base).stem
@@ -1282,7 +1704,7 @@ class VideoPipeline:
 
     def _resolve_video_for_merge(self, dirs: dict[str, Path], requested_name: str) -> Path:
         candidates: list[Path] = []
-        name = (requested_name or "story_silent.mp4").strip().replace("\\", "/").split("/")[-1]
+        name = (requested_name or "story_render.mp4").strip().replace("\\", "/").split("/")[-1]
         if name:
             candidates.append(dirs["renders_dir"] / name)
             candidates.append(dirs["video_root"] / name)
@@ -1625,3 +2047,10 @@ class VideoPipeline:
 
     def _rel(self, path: Path) -> str:
         return str(path.resolve().relative_to(self.repo_root)).replace("\\", "/")
+
+    def _safe_rel(self, path: Path) -> str:
+        resolved = path.resolve()
+        try:
+            return str(resolved.relative_to(self.repo_root)).replace("\\", "/")
+        except ValueError:
+            return str(resolved)

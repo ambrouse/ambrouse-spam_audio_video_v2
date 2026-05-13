@@ -14,17 +14,18 @@ from auto_convert_text.pipeline.browser_bridge_client import DEFAULT_BRIDGE_BASE
 from auto_convert_text.storage.project_store import ProjectStore
 
 
-DEFAULT_REWRITE_PROMPT = """Ban la bien tap truyen audio tieng Viet.
-Boi canh truyen: {story_context}
-Yeu cau:
-1. Viet lai duoi goc nhin nhan vat chinh.
-2. Giu y chinh va mach truyen.
-3. Luoc bo canh khong quan trong, lap lai, quang cao, menu web.
-4. Dung tieng Viet co dau, cau van tu nhien theo cach nguoi Viet noi va viet; uu tien tu ngu pho thong, han che Han Viet kho hieu.
-5. Dat nhip cau tu nhien cho giong doc audio: uu tien cau ngan va vua, tranh cau qua dai.
-6. Chi dung dau cham, dau phay, dau cham phay de tao khoang nghi. Neu gap dau hoi, dau than, dau hai cham, ngoac, gach ngang, hay chuyen thanh dau nghi phu hop thay vi xoa y.
-7. Moi doan nen co cac khoang nghi ro rang, giup model TTS doc on dinh. Khong dung markdown, khong danh so muc, khong giai thich.
-Noi dung chapter:
+DEFAULT_REWRITE_PROMPT = """Bạn là biên tập truyện audio tiếng Việt.
+Bối cảnh truyện: {story_context}
+Yêu cầu:
+1. Viết lại dưới góc nhìn nhân vật chính.
+2. Giữ ý chính và mạch truyện.
+3. Lược bỏ cảnh không quan trọng, lặp lại, quảng cáo, menu web.
+4. BẮT BUỘC dùng tiếng Việt có dấu đầy đủ. Nếu input bị lỗi mã hóa, thiếu dấu, hoặc có ký tự lạ, hãy khôi phục thành tiếng Việt có dấu tự nhiên.
+5. Câu văn phải tự nhiên theo cách người Việt nói và viết; ưu tiên từ ngữ phổ thông, hạn chế Hán Việt khó hiểu.
+6. Đặt nhịp câu tự nhiên cho giọng đọc audio: ưu tiên câu ngắn và vừa, tránh câu quá dài.
+7. Chỉ dùng dấu chấm, dấu phẩy, dấu chấm phẩy để tạo khoảng nghỉ. Nếu gặp dấu hỏi, dấu than, dấu hai chấm, ngoặc, gạch ngang, hãy chuyển thành dấu nghỉ phù hợp thay vì xóa ý.
+8. Mỗi đoạn nên có các khoảng nghỉ rõ ràng, giúp model TTS đọc ổn định. Không dùng markdown, không đánh số mục, không giải thích.
+Nội dung chapter:
 {chapter_text}
 """
 
@@ -149,6 +150,8 @@ def validate_rewrite(raw_text: str, rewritten: str, config: RewriteConfig) -> st
         return "Gemini output contains code fence."
     if re.search(r"^\s*[-*#]{1,3}\s+", output, flags=re.M):
         return "Gemini output appears to contain markdown."
+    if len(output) >= 120 and not re.search(r"[ăâđêôơưáàảãạấầẩẫậắằẳẵặéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]", output, flags=re.I):
+        return "Output appears to be Vietnamese without diacritics."
     raw_len = max(1, len(raw_text.strip()))
     ratio = len(output) / raw_len
     if ratio < config.min_output_chars_ratio:
