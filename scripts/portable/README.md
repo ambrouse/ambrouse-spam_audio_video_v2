@@ -22,13 +22,13 @@ Still required on the target machine:
 Build:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.1
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.2
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.1-win64.zip
+dist/ambrouse-studio-v0.1.2-win64.zip
 ```
 
 User run:

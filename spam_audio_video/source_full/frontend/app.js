@@ -1,4 +1,4 @@
-﻿const runBtn = document.getElementById('runBtn');
+const runBtn = document.getElementById('runBtn');
 const statusBox = document.getElementById('status');
 const runOverlay = document.getElementById('runOverlay');
 const runProgressFill = document.getElementById('runProgressFill');
@@ -274,7 +274,7 @@ const VIDEO_PROD_PRESET = {
   gpt_ports: [9222, 9223, 9224],
   gpt_image_limit: 10,
   prompt_tts_input_limit: 40,
-  render_workers: 4,
+  render_workers: 6,
 };
 
 

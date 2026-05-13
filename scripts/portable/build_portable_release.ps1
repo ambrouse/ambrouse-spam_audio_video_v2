@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "v0.1.1",
+  [string]$Version = "v0.1.2",
   [string]$PythonVersion = "3.12.7",
   [string]$NodeVersion = "22.13.1",
   [switch]$SkipRuntimeDownload

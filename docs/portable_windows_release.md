@@ -8,13 +8,13 @@ installing Python or Node.
 ## Build
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.1
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.2
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.1-win64.zip
+dist/ambrouse-studio-v0.1.2-win64.zip
 ```
 
 ## Runtime Entry Points
@@ -64,11 +64,11 @@ scheduler behavior.
 
 ## Render Workers
 
-Video render now defaults to `VIDEO_RENDER_WORKERS=4`.
+Video render now defaults to `VIDEO_RENDER_WORKERS=6`.
 
 The UI exposes `Render workers` in the GPT Image + Video Config panel.
 Use this to raise/lower parallel FFmpeg clip rendering:
 
 - `1`: safest, slowest.
-- `4`: default for RTX 3060-class GPUs.
-- `6-8`: try only if VRAM/driver remains stable.
+- `6`: aggressive default for RTX 3060-class GPUs.
+- `7-8`: try only if VRAM/driver remains stable.

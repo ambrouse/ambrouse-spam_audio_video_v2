@@ -66,7 +66,7 @@ class VideoPipelineService:
             video_preset=str(payload.get("video_preset") or "quality"),
             video_crf=int(payload.get("video_crf") or 18),
             video_cq=int(payload.get("video_cq") or 18),
-            render_workers=int(payload.get("render_workers") or os.getenv("VIDEO_RENDER_WORKERS", "4") or 4),
+            render_workers=int(payload.get("render_workers") or os.getenv("VIDEO_RENDER_WORKERS", "6") or 6),
         )
         image_provider = str(cfg.image_provider or "").strip().lower()
         if image_provider in {"gpt_web", "gpt"}:

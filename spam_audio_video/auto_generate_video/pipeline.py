@@ -70,7 +70,7 @@ class VideoPipelineConfig:
     video_preset: str = "quality"
     video_crf: int = 18
     video_cq: int = 18
-    render_workers: int = int(os.getenv("VIDEO_RENDER_WORKERS", "4") or 4)
+    render_workers: int = int(os.getenv("VIDEO_RENDER_WORKERS", "6") or 6)
 
 
 class VideoPipeline:
@@ -587,7 +587,7 @@ class VideoPipeline:
         gop = max(30, fps * 2)
         requested_encoder = str(config.video_encoder or "auto").strip().lower() or "auto"
         selected_encoder = self._resolve_video_encoder(config.video_encoder)
-        max_workers = max(1, min(8, int(config.render_workers or 4)))
+        max_workers = max(1, min(8, int(config.render_workers or 6)))
         if selected_encoder != "libx264":
             # Clip renders are independent FFmpeg processes. Keep enough workers to
             # use underloaded NVENC/GPU paths without flooding VRAM on consumer GPUs.
