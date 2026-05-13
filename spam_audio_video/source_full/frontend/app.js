@@ -135,6 +135,7 @@ const videoWidthInput = document.getElementById('videoWidthInput');
 const videoHeightInput = document.getElementById('videoHeightInput');
 const videoFpsInput = document.getElementById('videoFpsInput');
 const videoMotionIntensityInput = document.getElementById('videoMotionIntensityInput');
+const videoRenderWorkersInput = document.getElementById('videoRenderWorkersInput');
 const videoGptPortsInput = document.getElementById('videoGptPortsInput');
 const openGptPoolBtn = document.getElementById('openGptPoolBtn');
 const gptPoolStatusBtn = document.getElementById('gptPoolStatusBtn');
@@ -273,6 +274,7 @@ const VIDEO_PROD_PRESET = {
   gpt_ports: [9222, 9223, 9224],
   gpt_image_limit: 10,
   prompt_tts_input_limit: 40,
+  render_workers: 4,
 };
 
 
@@ -1337,6 +1339,7 @@ function applyVideoProductionDefaults() {
     [videoHeightInput, VIDEO_PROD_PRESET.height],
     [videoFpsInput, VIDEO_PROD_PRESET.fps],
     [videoMotionIntensityInput, VIDEO_PROD_PRESET.motion_intensity],
+    [videoRenderWorkersInput, VIDEO_PROD_PRESET.render_workers],
   ];
   for (const [el, value] of defaultTargets) {
     if (!el) {
@@ -1394,6 +1397,7 @@ function buildVideoPayload() {
   const height = Math.floor(parseVideoNumber(videoHeightInput, VIDEO_PROD_PRESET.height, 256));
   const fps = Math.floor(parseVideoNumber(videoFpsInput, VIDEO_PROD_PRESET.fps, 1));
   const motionIntensity = parseVideoNumber(videoMotionIntensityInput, VIDEO_PROD_PRESET.motion_intensity, 0.001);
+  const renderWorkers = Math.max(1, Math.min(8, Math.floor(parseVideoNumber(videoRenderWorkersInput, VIDEO_PROD_PRESET.render_workers, 1))));
   return {
     project_id: activeProjectId,
     session_id: activeSessionId,
@@ -1410,6 +1414,7 @@ function buildVideoPayload() {
     motion_intensity: Number(motionIntensity),
     gpt_image_limit: Number(imageCount),
     prompt_tts_input_limit: Number(promptTtsInputLimit),
+    render_workers: renderWorkers,
     bridge_base_url: normalizeBridgeBaseUrl(),
     bridge_timeout_s: 600,
     story_context: String(videoStoryContextInput?.value || '').trim(),
@@ -1443,6 +1448,7 @@ function buildRunAllPayload() {
     video_motion_intensity: videoConfig.motion_intensity,
     video_gpt_image_limit: videoConfig.gpt_image_limit,
     video_prompt_tts_input_limit: videoConfig.prompt_tts_input_limit,
+    video_render_workers: videoConfig.render_workers,
     video_story_context: videoConfig.story_context,
     video_gemini_prompt_template: videoConfig.gemini_prompt_template,
     video_render_with_audio: true,

@@ -360,6 +360,7 @@ class ChatRequest(BaseModel):
 	prompt: list[str] = Field(...)
 	mode: ChatMode | None = None
 	timeout_s: float = Field(default=600.0, ge=10.0, le=1200.0)
+	ports: list[int] | None = None
 
 
 class ChatItemResult(BaseModel):
@@ -393,6 +394,7 @@ class ImageRequest(BaseModel):
 	timeout_s: float = Field(default=600.0, ge=20.0, le=1200.0)
 	max_images: int = Field(default=4, ge=1, le=4)
 	response_format: Literal['json', 'binary'] = 'json'
+	ports: list[int] | None = None
 
 
 class GeneratedImage(BaseModel):
@@ -2389,6 +2391,11 @@ def _resolve_request_ports(service: GeminiBridgeService) -> list[int]:
 	return sorted(port for port in ports if 1 <= port <= 65535)
 
 
+def _resolve_payload_ports(service: GeminiBridgeService, requested_ports: list[int] | None) -> list[int]:
+	ports = _sanitize_ports(requested_ports)
+	return ports if ports else _resolve_request_ports(service)
+
+
 def _collect_candidate_ports(requested_ports: list[int] | None) -> list[int]:
 	ports: set[int] = set(DISCOVERY_PORTS)
 	for service in _all_services().values():
@@ -2595,7 +2602,7 @@ async def _dispatch_chat(provider: ChatProvider, payload: ChatRequest):
 
 	try:
 		prompts = _extract_prompts(payload.prompt)
-		candidate_ports = _resolve_request_ports(service)
+		candidate_ports = _resolve_payload_ports(service, payload.ports)
 		scheduler.register_ports(candidate_ports)
 		results = await asyncio.gather(
 			*[
@@ -2696,7 +2703,7 @@ async def _dispatch_image(provider: ChatProvider, payload: ImageRequest):
 
 	try:
 		prompts = _extract_prompts(payload.prompt)
-		candidate_ports = _resolve_request_ports(service)
+		candidate_ports = _resolve_payload_ports(service, payload.ports)
 		scheduler.register_ports(candidate_ports)
 		results = await asyncio.gather(
 			*[

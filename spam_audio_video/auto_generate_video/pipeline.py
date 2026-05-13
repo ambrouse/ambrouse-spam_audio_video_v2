@@ -15,6 +15,7 @@ import wave
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 from auto_convert_text.pipeline.browser_bridge_client import DEFAULT_BRIDGE_BASE_URL, BrowserBridgeClient
 from auto_convert_text.storage.project_store import ProjectStore
@@ -69,7 +70,7 @@ class VideoPipelineConfig:
     video_preset: str = "quality"
     video_crf: int = 18
     video_cq: int = 18
-    render_workers: int = 1
+    render_workers: int = int(os.getenv("VIDEO_RENDER_WORKERS", "4") or 4)
 
 
 class VideoPipeline:
@@ -188,6 +189,7 @@ class VideoPipeline:
         strict_gemini_prompt = bool(config.gemini_prompt_strict) or strict_env
 
         bridge_client = BrowserBridgeClient(config.bridge_base_url, timeout_s=config.bridge_timeout_s)
+        bridge_ports = self._bridge_ports_from_config(config)
 
         def _process_group(index: int, group: dict) -> dict:
             grouped_text = self._read_group_texts(
@@ -212,6 +214,7 @@ class VideoPipeline:
                             [gemini_instruction],
                             mode="fast",
                             timeout_s=config.bridge_timeout_s,
+                            ports=bridge_ports,
                         )
                         item = items[0] if items else None
                         if not item or not item.success:
@@ -250,23 +253,45 @@ class VideoPipeline:
                 "preview_text": final_prompt[:240],
             }
 
-        for index, group in enumerate(analysis["groups"], start=1):
-            if should_stop and should_stop():
-                raise RuntimeError("STOP_REQUESTED")
-            prompt_item = _process_group(index, group)
-            prompt_items[index - 1] = prompt_item
-            completed += 1
-            if progress_callback:
-                progress_callback({
-                    "stage": "video_prompts",
-                    "current": completed,
-                    "total": total,
-                    "message": f"Generated prompt {index}/{total} via Gemini bridge",
-                    "files_done": completed,
-                    "preview_text": prompt_item.get("preview_text") or "",
-                })
-            if prompt_delay_seconds > 0:
-                time.sleep(prompt_delay_seconds)
+        max_prompt_workers = max(1, min(24, int(config.prompt_parallel_workers or 1)))
+        if max_prompt_workers <= 1 or total <= 1:
+            for index, group in enumerate(analysis["groups"], start=1):
+                if should_stop and should_stop():
+                    raise RuntimeError("STOP_REQUESTED")
+                prompt_item = _process_group(index, group)
+                prompt_items[index - 1] = prompt_item
+                completed += 1
+                if progress_callback:
+                    progress_callback({
+                        "stage": "video_prompts",
+                        "current": completed,
+                        "total": total,
+                        "message": f"Generated prompt {index}/{total} via Gemini bridge",
+                        "files_done": completed,
+                        "preview_text": prompt_item.get("preview_text") or "",
+                    })
+                if prompt_delay_seconds > 0:
+                    time.sleep(prompt_delay_seconds)
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=max_prompt_workers) as executor:
+                futures = {
+                    executor.submit(_process_group, index, group): index
+                    for index, group in enumerate(analysis["groups"], start=1)
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    index = futures[future]
+                    prompt_item = future.result()
+                    prompt_items[index - 1] = prompt_item
+                    completed += 1
+                    if progress_callback:
+                        progress_callback({
+                            "stage": "video_prompts",
+                            "current": completed,
+                            "total": total,
+                            "message": f"Generated prompt {index}/{total} via Gemini bridge",
+                            "files_done": completed,
+                            "preview_text": prompt_item.get("preview_text") or "",
+                        })
 
         prompt_items = [item for item in prompt_items if isinstance(item, dict)]
 
@@ -395,37 +420,67 @@ class VideoPipeline:
         client = BrowserBridgeClient(config.bridge_base_url, timeout_s=config.bridge_timeout_s)
         items: list[dict] = []
         total = len(prompts)
+        prompt_rows: list[tuple[int, Path, str]] = []
         for index, prompt_path in enumerate(prompts, start=1):
+            prompt = self._sanitize_policy_safe_prompt(prompt_path.read_text(encoding="utf-8", errors="replace").strip())
+            prompt_rows.append((index, prompt_path, prompt))
+
+        if should_stop and should_stop():
+            raise RuntimeError("STOP_REQUESTED")
+        if progress_callback:
+            progress_callback({
+                "stage": "video_images",
+                "current": 0,
+                "total": total,
+                "message": f"Submitted {total} GPT image prompts to bridge batch",
+                "files_done": 0,
+                "preview_text": f"{total} prompts",
+            })
+
+        bridge_ports = self._bridge_ports_from_config(config)
+        batch_size = max(1, min(24, int(os.getenv("VIDEO_BRIDGE_BATCH_SIZE", "24") or 24)))
+        for batch_start in range(0, len(prompt_rows), batch_size):
             if should_stop and should_stop():
                 raise RuntimeError("STOP_REQUESTED")
-            prompt = self._sanitize_policy_safe_prompt(prompt_path.read_text(encoding="utf-8", errors="replace").strip())
-            payload, bridge_items = client.image("gpt", [prompt], max_images=1, timeout_s=config.bridge_timeout_s)
-            item = bridge_items[0] if bridge_items else None
-            if not item or not item.success or not item.images:
-                raise RuntimeError((item.error_message if item else None) or f"GPT bridge image failed for scene {index:04d}.")
-            image_path = client.save_bridge_image(item.images[0], dirs["images_dir"] / f"scene_{index:04d}.png")
-            self._validate_generated_image_file(image_path)
-            row = {
-                "scene_index": index,
-                "prompt_path": self._rel(prompt_path),
-                "image_path": self._rel(image_path),
-                "engine": "bridge_gpt",
-                "used_port": item.port,
-                "bridge_request_id": str(payload.get("request_id") or item.request_id or ""),
-                "source_download_url": str((item.images[0] or {}).get("download_url") or ""),
-                "source_local_path": str((item.images[0] or {}).get("local_path") or ""),
-                "byte_size": image_path.stat().st_size,
-            }
-            items.append(row)
-            if progress_callback:
-                progress_callback({
-                    "stage": "video_images",
-                    "current": index,
-                    "total": total,
-                    "message": f"Generated image {index}/{total} via GPT bridge",
-                    "files_done": index,
-                    "preview_text": image_path.name,
-                })
+            batch_rows = prompt_rows[batch_start : batch_start + batch_size]
+            payload, bridge_items = client.image(
+                "gpt",
+                [prompt for _, _, prompt in batch_rows],
+                max_images=1,
+                timeout_s=config.bridge_timeout_s,
+                ports=bridge_ports,
+            )
+
+            for offset, (index, prompt_path, _prompt) in enumerate(batch_rows):
+                if should_stop and should_stop():
+                    raise RuntimeError("STOP_REQUESTED")
+                item = bridge_items[offset] if offset < len(bridge_items) else None
+                if not item or not item.success or not item.images:
+                    raise RuntimeError((item.error_message if item else None) or f"GPT bridge image failed for scene {index:04d}.")
+                image_path = client.save_bridge_image(item.images[0], dirs["images_dir"] / f"scene_{index:04d}.png")
+                self._validate_generated_image_file(image_path)
+                row = {
+                    "scene_index": index,
+                    "prompt_path": self._rel(prompt_path),
+                    "image_path": self._rel(image_path),
+                    "engine": "bridge_gpt",
+                    "used_port": item.port,
+                    "bridge_request_id": str(payload.get("request_id") or item.request_id or ""),
+                    "source_download_url": str((item.images[0] or {}).get("download_url") or ""),
+                    "source_local_path": str((item.images[0] or {}).get("local_path") or ""),
+                    "elapsed_ms": int(item.elapsed_ms or 0),
+                    "byte_size": image_path.stat().st_size,
+                }
+                items.append(row)
+                if progress_callback:
+                    progress_callback({
+                        "stage": "video_images",
+                        "current": len(items),
+                        "total": total,
+                        "message": f"Generated image {index}/{total} via GPT bridge",
+                        "files_done": len(items),
+                        "preview_text": image_path.name,
+                    })
 
         image_manifest = {
             "project_id": project_id,
@@ -434,6 +489,7 @@ class VideoPipeline:
             "bridge_base_url": client.base_url,
             "scene_count": len(items),
             "max_images": max(1, min(120, int(config.gpt_image_limit or 10))),
+            "batch_size": batch_size,
             "skipped": skipped,
             "items": items,
         }
@@ -531,10 +587,11 @@ class VideoPipeline:
         gop = max(30, fps * 2)
         requested_encoder = str(config.video_encoder or "auto").strip().lower() or "auto"
         selected_encoder = self._resolve_video_encoder(config.video_encoder)
-        max_workers = max(1, min(8, int(config.render_workers or 1)))
+        max_workers = max(1, min(8, int(config.render_workers or 4)))
         if selected_encoder != "libx264":
-            # Most consumer GPUs throttle concurrent encode sessions.
-            max_workers = min(max_workers, 3)
+            # Clip renders are independent FFmpeg processes. Keep enough workers to
+            # use underloaded NVENC/GPU paths without flooding VRAM on consumer GPUs.
+            max_workers = min(max_workers, 6)
 
         def _clamp(value: float, low: float, high: float) -> float:
             return max(low, min(high, value))
@@ -1891,6 +1948,23 @@ class VideoPipeline:
             "GPU video encoder is required, but no supported FFmpeg hardware H.264 encoder is usable. "
             "Install/update NVIDIA driver/FFmpeg NVENC support or choose a working hardware encoder."
         )
+
+    @staticmethod
+    def _bridge_ports_from_config(config: VideoPipelineConfig) -> list[int]:
+        values: set[int] = set()
+        urls: list[str] = []
+        if config.cdp_url:
+            urls.append(str(config.cdp_url))
+        urls.extend(str(item) for item in (config.cdp_urls or []) if str(item or "").strip())
+        for raw in urls:
+            try:
+                parsed = urlparse(raw if "://" in raw else f"http://127.0.0.1:{raw}")
+                candidate = int(parsed.port or 0)
+            except Exception:
+                candidate = 0
+            if 1 <= candidate <= 65535:
+                values.add(candidate)
+        return sorted(values)
 
     def _probe_video_encoder(self, encoder: str) -> bool:
         if encoder == "libx264":

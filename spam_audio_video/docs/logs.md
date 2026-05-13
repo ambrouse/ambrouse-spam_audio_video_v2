@@ -1,6 +1,9 @@
 ﻿# Change Log (Compact)
 
 ## 2026-05-14
+- GPT image generation now submits scene prompts as a bridge batch, allowing the bridge scheduler to keep ready ports busy and cooldown limited ports.
+- Video prompt generation now uses parallel bridge requests through the same port scheduler.
+- Video render defaults to `VIDEO_RENDER_WORKERS=4`, and the UI exposes `Render workers`.
 - GPU runtime hardened for production: audio defaults to CUDA and fails fast when the TTS venv has CPU-only PyTorch.
 - Video encoder selection is GPU-only; `auto` verifies hardware H.264 encoders and CPU `libx264` is blocked.
 - GPU Setting UI now shows a short runtime conclusion instead of raw JSON.

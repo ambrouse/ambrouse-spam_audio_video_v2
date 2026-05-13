@@ -277,7 +277,7 @@ class RunAllRequest(ConvertFullRunRequest):
     video_preset: str = "quality"
     video_crf: int = 18
     video_cq: int = 18
-    video_render_workers: int = 1
+    video_render_workers: int = 4
 
 
 class VideoPipelineRequest(BaseModel):
@@ -313,7 +313,7 @@ class VideoPipelineRequest(BaseModel):
     video_preset: str = "quality"
     video_crf: int = 18
     video_cq: int = 18
-    render_workers: int = 1
+    render_workers: int = 4
     render_with_audio: bool = True
     merge_audio: bool = True
     output_name: str = "story_render.mp4"

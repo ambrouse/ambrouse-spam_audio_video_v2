@@ -66,6 +66,7 @@ class BrowserBridgeClient:
         prompts: list[str],
         mode: str | None = "fast",
         timeout_s: float | None = None,
+        ports: list[int] | None = None,
     ) -> tuple[dict, list[BridgeChatItem]]:
         clean_provider = self._provider(provider)
         clean_prompts = self._clean_prompts(prompts)
@@ -75,6 +76,9 @@ class BrowserBridgeClient:
         }
         if clean_provider == "gemini" and mode:
             payload["mode"] = mode
+        clean_ports = self._sanitize_ports(ports or [])
+        if clean_ports:
+            payload["ports"] = clean_ports
         data = self._post_json(f"/v1/chat/{clean_provider}", payload, timeout_s=payload["timeout_s"] + 30.0)
         request_id = str(data.get("request_id") or "")
         results = data.get("results")
@@ -116,6 +120,7 @@ class BrowserBridgeClient:
         prompts: list[str],
         max_images: int = 1,
         timeout_s: float | None = None,
+        ports: list[int] | None = None,
     ) -> tuple[dict, list[BridgeImageItem]]:
         clean_provider = self._provider(provider)
         clean_prompts = self._clean_prompts(prompts)
@@ -125,6 +130,9 @@ class BrowserBridgeClient:
             "max_images": max(1, min(4, int(max_images or 1))),
             "response_format": "json",
         }
+        clean_ports = self._sanitize_ports(ports or [])
+        if clean_ports:
+            payload["ports"] = clean_ports
         data = self._post_json(f"/v1/image/{clean_provider}", payload, timeout_s=payload["timeout_s"] + 30.0)
         request_id = str(data.get("request_id") or "")
         results = data.get("results")
