@@ -1,4 +1,8 @@
 <p align="center">
+  <img src="spam_audio_video/docs/assets/banner.png" alt="Ambrouse Studio render progress banner" width="100%" />
+</p>
+
+<p align="center">
   <img src="https://raw.githubusercontent.com/ambrouse/img/main/icon1.svg" alt="Ambrouse Logo" width="120" />
 </p>
 
