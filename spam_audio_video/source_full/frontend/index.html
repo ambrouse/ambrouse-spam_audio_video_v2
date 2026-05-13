@@ -1,0 +1,589 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Story Pipeline Studio</title>
+  <link rel="icon" type="image/svg+xml" href="https://raw.githubusercontent.com/ambrouse/img/main/icon1.svg" />
+  <link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+  <a class="skip-link" href="#appContent">Skip to content</a>
+  <div id="pageSplash" class="splash">
+    <div class="splash__inner">
+      <img class="brand-logo" src="https://raw.githubusercontent.com/ambrouse/img/main/icon1.svg" alt="brand logo" />
+      <h2>Story Pipeline Studio</h2>
+      <div class="splash__progress"><span></span></div>
+    </div>
+  </div>
+
+  <div id="runOverlay" class="run-overlay hidden">
+    <div class="run-overlay__box">
+      <p id="runOverlayTitle">Pipeline is running</p>
+      <div class="run-overlay__progress"><span id="runProgressFill"></span></div>
+      <p id="runProgressText" class="run-overlay__percent">0%</p>
+      <p id="runStageText" class="run-overlay__stage">Waiting...</p>
+      <p id="runFileText" class="run-overlay__files">0 files</p>
+      <div class="button-row">
+        <button id="overlayStopBtn" class="btn-secondary" type="button">Stop</button>
+        <button id="overlayEmergencyStopBtn" class="btn-danger" type="button">Emergency Stop</button>
+      </div>
+      <pre id="runPreviewText" class="run-overlay__preview">...</pre>
+    </div>
+  </div>
+
+  <div id="projectPickerModal" class="picker-modal hidden" role="dialog" aria-modal="true" aria-label="Open project workspace">
+    <div class="picker-modal__box">
+      <div class="picker-modal__head">
+        <h3>Open Project Workspace</h3>
+        <button id="closeProjectPickerXBtn" class="picker-modal__close" type="button" aria-label="Close popup">x</button>
+      </div>
+      <div class="form-grid compact-grid">
+        <div>
+          <label for="convertProjectSelect">Project</label>
+          <select id="convertProjectSelect"></select>
+        </div>
+        <div>
+          <label for="sessionSelect">Session</label>
+          <select id="sessionSelect"></select>
+        </div>
+      </div>
+      <p id="projectPickerHint" class="picker-modal__hint">Choose project and session, then press Open.</p>
+      <div class="button-row picker-modal__actions">
+        <button id="refreshProjectsBtn" class="btn-secondary" type="button">Refresh</button>
+        <button id="confirmOpenProjectBtn" type="button">Open</button>
+        <button id="closeProjectPickerBtn" class="btn-secondary" type="button">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <main class="app-shell" aria-label="Story Pipeline Studio">
+    <aside class="sidebar">
+      <img class="hero__logo" src="https://raw.githubusercontent.com/ambrouse/img/main/icon1.svg" alt="logo" />
+      <div>
+        <p class="eyebrow">AI Audio Ops</p>
+        <h1>Story Pipeline Studio</h1>
+      </div>
+      <nav class="page-tabs" aria-label="Pipeline pages">
+        <div id="workspaceNavGroup" class="page-tabs__group">
+          <p class="page-tabs__label">Part 1: Project Management</p>
+          <button class="page-tab page-tab--active" type="button" data-page-target="projectsPage">Workspace Projects</button>
+        </div>
+        <div id="pageNavDivider" class="page-tabs__divider"></div>
+        <div id="projectNavGroup" class="page-tabs__group">
+          <p class="page-tabs__label">Part 2: In-Project Management</p>
+          <button class="page-tab" type="button" data-page-target="convertPage">Convert</button>
+          <button class="page-tab" type="button" data-page-target="assetsPage">Assets</button>
+          <button class="page-tab" type="button" data-page-target="knowledgePage">Knowledge</button>
+        </div>
+      </nav>
+    </aside>
+
+    <section id="appContent" class="workbench" tabindex="-1">
+      <section id="projectsPage" class="app-page app-page--active">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Workspace Projects</p>
+            <h3>Project management only</h3>
+          </div>
+          <p class="hint-line">Create/select/open project here, then move to project workspace pages.</p>
+        </div>
+
+        <div class="workspace-gate-card">
+          <div>
+            <p class="eyebrow">Workspace Access</p>
+            <h3>Choose or create project</h3>
+            <p class="hint-line">Open Project Workspace to switch into in-project management mode.</p>
+          </div>
+          <div class="workspace-gate-form">
+            <div>
+              <label for="workspaceNewProjectNameInput">New project name</label>
+              <input id="workspaceNewProjectNameInput" type="text" placeholder="my-story-project" />
+            </div>
+            <div>
+              <label for="workspaceNewProjectIdInput">Project id (optional)</label>
+              <input id="workspaceNewProjectIdInput" type="text" placeholder="my-story-project" />
+            </div>
+            <div class="button-row">
+              <button id="createProjectBtn" type="button">Create Project</button>
+              <button id="loadProjectBtn" class="btn-secondary" type="button">Open Project Workspace</button>
+            </div>
+            <p id="workspaceGateHint" class="hint-line workspace-gate-hint">Select or create a project to enter workspace.</p>
+          </div>
+        </div>
+
+        <div class="projects-hub">
+          <div class="projects-hub__left">
+            <div id="projectStats" class="metric-grid"></div>
+            <div class="panel-card">
+              <h4>Projects</h4>
+              <div id="projectList" class="project-list"></div>
+            </div>
+          </div>
+
+          <div class="projects-hub__right">
+            <div class="panel-card">
+              <h4>Selected project details</h4>
+              <div class="form-grid projects-form-grid">
+                <div>
+                  <label for="projectEditNameInput">Project name</label>
+                  <input id="projectEditNameInput" type="text" placeholder="ten-truyen" />
+                </div>
+                <div>
+                  <label for="projectNotesInput">Notes</label>
+                  <input id="projectNotesInput" type="text" placeholder="Ghi chu noi bo, voice, style..." />
+                </div>
+              </div>
+              <div class="button-row project-actions-row">
+                <button id="saveProjectBtn" type="button">Save Project</button>
+                <button id="deleteProjectBtn" class="btn-danger" type="button">Delete Project</button>
+              </div>
+            </div>
+
+            <div class="panel-card">
+              <div class="section-head section-head--compact">
+                <h4>Sessions in selected project</h4>
+                <button id="deleteSessionBtn" class="btn-danger" type="button">Delete Session</button>
+              </div>
+              <div id="sessionList" class="session-list"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="convertPage" class="app-page">
+        <div class="compact-panel">
+          <div class="convert-toolbar">
+            <button id="runAllBtn" type="button">Run All</button>
+            <button id="runAllResumeBtn" class="btn-secondary" type="button">Run All Resume</button>
+            <button id="closeProjectWorkspaceBtn" class="btn-secondary" type="button">Close Workspace</button>
+          </div>
+
+          <div class="session-ops-bar">
+            <div>
+              <label for="activeSessionSelect">Active session</label>
+              <select id="activeSessionSelect"></select>
+            </div>
+            <div>
+              <label for="newSessionIdInput">New session id</label>
+              <input id="newSessionIdInput" type="text" placeholder="session_ch0001_to_ch0010" />
+            </div>
+            <div class="session-ops-bar__btn">
+              <label>&nbsp;</label>
+              <button id="createSessionBtn" class="btn-secondary" type="button">Create Session</button>
+            </div>
+          </div>
+          <p id="convertActionHint" class="hint-line">Run All can start after selecting session and having a story URL.</p>
+
+          <div class="form-grid compact-grid convert-compact-grid">
+            <div>
+              <label for="startChapterInput">Run from chapter</label>
+              <input id="startChapterInput" type="number" min="1" value="1" />
+            </div>
+            <div>
+              <label for="chapterCountInput">Run chapter count</label>
+              <input id="chapterCountInput" type="number" min="1" max="1000" value="10" />
+            </div>
+            <div>
+              <label for="voiceSelect">Voice</label>
+              <select id="voiceSelect"></select>
+            </div>
+            <div>
+              <label for="modelSelect">Model</label>
+              <select id="modelSelect"></select>
+            </div>
+            <div>
+              <label for="temperatureInput">Temperature</label>
+              <input id="temperatureInput" type="range" min="0.05" max="1.0" step="0.01" value="0.05" />
+            </div>
+            <div>
+              <label for="topKInput">Top-K</label>
+              <input id="topKInput" type="range" min="1" max="80" step="1" value="80" />
+            </div>
+            <div>
+              <label for="maxCharsInput">Max chars</label>
+              <input id="maxCharsInput" type="range" min="80" max="420" step="10" value="420" />
+            </div>
+            <div>
+              <label for="ttsIoWorkersInput">TTS IO workers (save/postprocess)</label>
+              <input id="ttsIoWorkersInput" type="number" min="1" max="6" step="1" value="2" />
+            </div>
+            <div>
+              <label for="rewriteWorkersInput">Rewrite workers</label>
+              <input id="rewriteWorkersInput" type="number" min="1" max="9" value="2" />
+            </div>
+            <div>
+              <label for="videoImageCountInput">Images per session</label>
+              <input id="videoImageCountInput" type="number" min="1" max="120" step="1" value="10" />
+            </div>
+            <div>
+              <label for="videoPromptTtsInputLimitInput">Max TTS inputs for image prompt</label>
+              <input id="videoPromptTtsInputLimitInput" type="number" min="1" max="240" step="1" value="40" />
+            </div>
+          </div>
+
+          <p id="samplingInfo" class="hint-line">temperature: 0.05, top_k: 80, max_chars: 420, ref_clean: false</p>
+
+          <details class="only-actions">
+            <summary>Only Actions</summary>
+            <div class="button-row">
+              <button id="runCollectCleanBtn" class="btn-secondary" type="button">Collect + Rewrite + Clean</button>
+              <button id="runCollectOnlyBtn" class="btn-secondary" type="button">Collect only</button>
+              <button id="runRewriteOnlyBtn" class="btn-secondary" type="button">Rewrite only</button>
+              <button id="runCleanOnlyBtn" class="btn-secondary" type="button">Clean only</button>
+              <button id="runExportOnlyBtn" class="btn-secondary" type="button">Create TTS Inputs</button>
+              <button id="runBtn" type="button">Run Audio only</button>
+              <button id="runVideoImagesOnlyBtn" class="btn-secondary" type="button">Run Images only</button>
+              <button id="runVideoOnlyBtn" class="btn-secondary" type="button">Run Video only</button>
+            </div>
+            <div class="form-grid compact-grid">
+              <div>
+                <label for="chunkPresetSelect">Chunk preset</label>
+                <select id="chunkPresetSelect">
+                  <option value="low" selected>Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                </select>
+              </div>
+              <div>
+                <label for="chunkMinWordsInput">Min words</label>
+                <input id="chunkMinWordsInput" type="number" min="1" value="16" />
+              </div>
+              <div>
+                <label for="chunkMaxWordsInput">Max words</label>
+                <input id="chunkMaxWordsInput" type="number" min="1" value="64" />
+              </div>
+              <div class="chunk-actions">
+                <label>&nbsp;</label>
+                <button id="applyChunkPresetBtn" class="btn-secondary" type="button">Apply preset</button>
+              </div>
+              <div class="chunk-actions">
+                <label class="checkline" for="clearOldTtsTextInput">
+                  <input id="clearOldTtsTextInput" type="checkbox" checked />
+                  Clear old tts txt
+                </label>
+              </div>
+            </div>
+            <div class="button-row danger-zone">
+              <button id="clearRawBtn" class="btn-secondary" type="button">Clear Raw</button>
+              <button id="clearRewrittenBtn" class="btn-secondary" type="button">Clear Rewritten</button>
+              <button id="clearAudioCleanBtn" class="btn-secondary" type="button">Clear Clean</button>
+              <button id="clearTtsInputsBtn" class="btn-secondary" type="button">Clear TTS Inputs</button>
+              <button id="clearAllSessionTextBtn" class="btn-danger" type="button">Clear All Text</button>
+            </div>
+          </details>
+
+        </div>
+      </section>
+
+      <section id="assetsPage" class="app-page">
+        <div class="section-head">
+          <div>
+            <h3>Assets</h3>
+          </div>
+          <button id="refreshMediaBtn" class="btn-secondary" type="button">Refresh Assets</button>
+        </div>
+        <div class="assets-tabs">
+          <button class="assets-tab-btn assets-tab-btn--active" type="button" data-assets-tab-target="assetsUrlTab">URLs</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsBridgeTab">Bridge</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsGpuTab">GPU Setting</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsGeminiTab">Gemini</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsGptTab">GPT</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsPromptTab">Prompt</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsSessionTab">Session</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsTextTab">Text Files</button>
+          <button class="assets-tab-btn" type="button" data-assets-tab-target="assetsMediaTab">Media</button>
+        </div>
+
+        <div id="assetsBridgeTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Browser Bridge Ports</h4>
+              <div class="form-grid compact-grid">
+                <div>
+                  <label for="bridgeBaseUrlInput">Bridge base URL</label>
+                  <input id="bridgeBaseUrlInput" type="text" value="http://127.0.0.1:8008" />
+                </div>
+                <div>
+                  <label for="bridgePortsInput">Ports</label>
+                  <input id="bridgePortsInput" type="text" value="9222,9223,9224" />
+                </div>
+              </div>
+              <div class="button-row">
+                <button id="openBridgePortsBtn" type="button">Open Ports</button>
+                <button id="pingBridgePortsBtn" class="btn-secondary" type="button">Ping Ports</button>
+                <button id="llmTestChatBtn" class="btn-secondary" type="button">Test Gemini</button>
+              </div>
+              <label for="llmTestPromptInput">Gemini test prompt</label>
+              <textarea id="llmTestPromptInput" rows="3" placeholder="Tra loi dung mot tu: OK"></textarea>
+              <label for="llmTestResponseOutput">Gemini response</label>
+              <textarea id="llmTestResponseOutput" rows="5" readonly></textarea>
+            </div>
+            <div>
+              <h4>GPT Image Test</h4>
+              <label for="bridgeImageTestPromptInput">Image prompt</label>
+              <textarea id="bridgeImageTestPromptInput" rows="4" placeholder="Cinematic 16:9 manhua landscape, no text, no watermark."></textarea>
+              <div class="button-row">
+                <button id="bridgeImageTestBtn" type="button">Test GPT Image</button>
+              </div>
+              <label for="bridgeStatusOutput">Bridge status</label>
+              <textarea id="bridgeStatusOutput" rows="10" readonly></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsGpuTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>GPU Runtime</h4>
+              <div class="button-row">
+                <button id="gpuRefreshBtn" type="button">Refresh GPU</button>
+                <button id="gpuPrewarmAudioBtn" class="btn-secondary" type="button">Prewarm Audio</button>
+                <button id="gpuCheckVideoBtn" class="btn-secondary" type="button">Check Video Encoder</button>
+              </div>
+              <p class="hint-line">Audio/video will use GPU when detected, and only fallback CPU when no GPU path is available.</p>
+            </div>
+            <div>
+              <h4>Status</h4>
+              <textarea id="gpuStatusOutput" rows="14" readonly></textarea>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsUrlTab" class="assets-tab-panel assets-tab-panel--active" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Crawl settings</h4>
+              <div class="form-grid compact-grid">
+                <div class="span-2">
+                  <label for="storyUrlInput">Story URL</label>
+                  <input id="storyUrlInput" type="url" placeholder="https://apptruyenchu.pro/truyen/..." />
+                </div>
+              </div>
+              <p id="chapterPreview" class="hint-line">Preview...</p>
+              <div class="button-row">
+                <button id="crawlFromBrowserBtn" class="btn-secondary" type="button">Crawl URL</button>
+                <button id="openAndCrawlBtn" type="button">Open Web + Crawl</button>
+              </div>
+            </div>
+
+            <div>
+              <h4>Chapter URLs</h4>
+              <textarea id="chapterUrlsInput" rows="12" placeholder="one url per line..."></textarea>
+              <div class="button-row">
+                <button id="loadChapterUrlsBtn" class="btn-secondary" type="button">Load URLs</button>
+                <button id="saveChapterUrlsBtn" class="btn-secondary" type="button">Save URLs</button>
+                <button id="appendChapterUrlsBtn" class="btn-secondary" type="button">Append</button>
+                <button id="clearChapterUrlsBtn" class="btn-danger" type="button">Clear URLs</button>
+              </div>
+              <div class="button-row">
+                <input id="chapterItemIndexInput" type="number" min="0" value="0" placeholder="index" />
+                <input id="chapterItemUrlInput" type="text" placeholder="url" />
+              </div>
+              <div class="button-row">
+                <button id="loadChapterItemsBtn" class="btn-secondary" type="button">Load Items</button>
+                <button id="patchChapterItemBtn" class="btn-secondary" type="button">Patch Item</button>
+                <button id="deleteChapterItemBtn" class="btn-danger" type="button">Delete Item</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsGeminiTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Gemini Bridge</h4>
+              <p class="hint-line">Rewrite va prompt anh hien chay qua tab Bridge. Tab nay giu lai de dieu huong, khong con dung endpoint API Gemini/OpenAI-compatible cu.</p>
+              <div class="button-row">
+                <button class="btn-secondary" type="button" data-assets-tab-target="assetsBridgeTab">Open Bridge Tab</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsGptTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>GPT Image + Video Config</h4>
+              <div class="form-grid compact-grid">
+                <div>
+                  <label for="videoSceneDurationInput">Seconds per image</label>
+                  <input id="videoSceneDurationInput" type="number" min="5" max="300" step="1" value="60" />
+                </div>
+                <div>
+                  <label for="videoWidthInput">Width</label>
+                  <input id="videoWidthInput" type="number" min="512" step="2" value="3840" />
+                </div>
+                <div>
+                  <label for="videoHeightInput">Height</label>
+                  <input id="videoHeightInput" type="number" min="512" step="2" value="2160" />
+                </div>
+                <div>
+                  <label for="videoFpsInput">FPS</label>
+                  <input id="videoFpsInput" type="number" min="12" max="60" step="1" value="60" />
+                </div>
+                <div>
+                  <label for="videoMotionIntensityInput">Motion intensity</label>
+                  <input id="videoMotionIntensityInput" type="number" min="0.005" max="0.18" step="0.005" value="0.06" />
+                </div>
+                <div class="span-2">
+                  <label for="videoGptPortsInput">GPT ports (comma separated)</label>
+                  <input id="videoGptPortsInput" type="text" value="9222,9223,9224" />
+                </div>
+              </div>
+              <div class="button-row">
+                <button id="openGptPoolBtn" class="btn-secondary" type="button">Open GPT Ports</button>
+                <button id="gptPoolStatusBtn" class="btn-secondary" type="button">Check GPT Port Status</button>
+                <button id="videoRefreshBtn" class="btn-secondary" type="button">Refresh Video Files</button>
+              </div>
+              <p id="videoActionHint" class="hint-line">Tab GPT chi de cau hinh. Chay video o Convert > Only Actions.</p>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsPromptTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Prompt</h4>
+              <label for="storyContextInput">Story context</label>
+              <textarea id="storyContextInput" rows="5" placeholder="..."></textarea>
+              <label for="rewritePromptInput">Rewrite prompt</label>
+              <textarea id="rewritePromptInput" rows="7" placeholder="..."></textarea>
+              <div class="button-row">
+                <button id="loadRewritePromptBtn" class="btn-secondary" type="button">Load Prompt</button>
+                <button id="saveRewritePromptBtn" class="btn-secondary" type="button">Save Prompt</button>
+                <button id="clearRewritePromptBtn" class="btn-danger" type="button">Clear Prompt</button>
+                <button id="resetRewritePromptBtn" class="btn-secondary" type="button">Reset Prompt</button>
+              </div>
+              <div class="button-row">
+                <button id="loadPromptDefaultBtn" class="btn-secondary" type="button">Load Default</button>
+                <button id="savePromptDefaultBtn" class="btn-secondary" type="button">Save Default</button>
+                <button id="clearPromptDefaultBtn" class="btn-danger" type="button">Clear Default</button>
+              </div>
+            </div>
+            <div>
+              <h4>Video Prompt</h4>
+              <label for="videoStoryContextInput">Video story context</label>
+              <textarea id="videoStoryContextInput" rows="4" placeholder="Ngu canh/nhan vat/chu de cho canh video..."></textarea>
+              <label for="videoGeminiPromptInput">Gemini prompt template (for prompt-generation)</label>
+              <textarea id="videoGeminiPromptInput" rows="8" placeholder="Su dung {story_context} va {scene_text} de chen du lieu vao template."></textarea>
+              <div class="button-row">
+                <button id="loadVideoPromptBtn" class="btn-secondary" type="button">Load Session Prompt</button>
+                <button id="saveVideoPromptBtn" class="btn-secondary" type="button">Save Session Prompt</button>
+                <button id="clearVideoPromptBtn" class="btn-danger" type="button">Clear Session Prompt</button>
+                <button id="resetVideoPromptBtn" class="btn-secondary" type="button">Reset Prompt</button>
+              </div>
+              <div class="button-row">
+                <button id="loadVideoPromptDefaultBtn" class="btn-secondary" type="button">Load Default</button>
+                <button id="saveVideoPromptDefaultBtn" class="btn-secondary" type="button">Save Default</button>
+                <button id="clearVideoPromptDefaultBtn" class="btn-danger" type="button">Clear Default</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsSessionTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Session Manager</h4>
+              <div class="button-row">
+                <select id="assetsSessionSelect"></select>
+                <button id="refreshSessionsTabBtn" class="btn-secondary" type="button">Refresh</button>
+                <button id="activateSessionFromTabBtn" class="btn-secondary" type="button">Set Active</button>
+                <button id="deleteSessionFromTabBtn" class="btn-danger" type="button">Delete Session</button>
+              </div>
+              <p class="hint-line">Tab nay chi de quan ly session. File text nam o tab Text Files.</p>
+              <div id="assetsSessionList" class="session-list"></div>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsTextTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>TTS text files</h4>
+              <select id="textFileSelect"></select>
+              <div class="button-row">
+                <button id="refreshTextBtn" class="btn-secondary" type="button">Refresh TXT</button>
+                <button id="loadTextBtn" class="btn-secondary" type="button">Load</button>
+                <button id="deleteTextBtn" class="btn-secondary" type="button">Delete</button>
+              </div>
+              <label for="textFilenameInput">File name</label>
+              <input id="textFilenameInput" type="text" value="text_new.txt" />
+              <textarea id="textContentInput" rows="10" placeholder="Nhap noi dung text de chay TTS..."></textarea>
+              <div class="button-row">
+                <button id="newTextBtn" class="btn-secondary" type="button">New</button>
+                <button id="saveTextBtn" type="button">Save TXT</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="assetsMediaTab" class="assets-tab-panel" data-assets-tab-panel>
+          <div class="asset-grid">
+            <div>
+              <h4>Audio and video</h4>
+              <div class="button-row">
+                <button id="clearSessionAudioBtn" class="btn-secondary" type="button">Clear Audio</button>
+                <button id="clearSessionImagesBtn" class="btn-secondary" type="button">Clear Images</button>
+                <button id="clearSessionVideoInAssetsBtn" class="btn-secondary" type="button">Clear Video</button>
+              </div>
+              <select id="audioFileSelect"></select>
+              <div class="button-row">
+                <button id="playAudioBtn" class="btn-secondary" type="button">Play</button>
+                <button id="pauseAudioBtn" class="btn-secondary" type="button">Pause</button>
+                <button id="downloadAudioBtn" class="btn-secondary" type="button">Download Audio</button>
+              </div>
+              <audio id="audioPreview" controls preload="metadata"></audio>
+              <select id="videoFileSelect"></select>
+              <div class="button-row">
+                <button id="downloadVideoBtn" class="btn-secondary" type="button">Download Video</button>
+              </div>
+              <video id="videoPreview" controls preload="metadata"></video>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="knowledgePage" class="app-page">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Project Knowledge</p>
+            <h3>Docs, Plans, Agent Notes, Logs</h3>
+          </div>
+          <div class="button-row">
+            <button id="refreshKnowledgeBtn" class="btn-secondary" type="button">Refresh</button>
+            <button id="cleanLogsBtn" class="btn-danger" type="button">Clean Logs</button>
+            <button id="applyRetentionBtn" class="btn-secondary" type="button">Apply Retention</button>
+          </div>
+        </div>
+        <div class="asset-grid">
+          <div>
+            <h4>Knowledge Index</h4>
+            <select id="knowledgeTypeFilter">
+              <option value="">All types</option>
+              <option value="docs">Docs</option>
+              <option value="plans">Plans</option>
+              <option value="agent">Agent</option>
+              <option value="logs">Logs</option>
+            </select>
+            <select id="knowledgeItemSelect"></select>
+            <textarea id="knowledgePreview" rows="8" readonly placeholder="Knowledge summary..."></textarea>
+          </div>
+          <div>
+            <h4>Logs Query</h4>
+            <input id="logsKeywordInput" type="text" placeholder="keyword..." />
+            <div class="button-row">
+              <button id="queryLogsBtn" class="btn-secondary" type="button">Query Logs</button>
+            </div>
+            <textarea id="logsPreview" rows="10" readonly placeholder="Log lines..."></textarea>
+          </div>
+        </div>
+      </section>
+
+    </section>
+  </main>
+  <pre id="status" class="status-console" aria-live="polite">System ready.</pre>
+  <script src="/assets/app.js"></script>
+</body>
+</html>

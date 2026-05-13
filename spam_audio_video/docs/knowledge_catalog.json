@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-01T11:59:18.201293+00:00",
+  "items": [
+    {
+      "path": "docs/logs.md",
+      "type": "docs",
+      "title": "2026-05-01",
+      "summary": "Compact log timeline",
+      "status": "active"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase6.md",
+      "type": "docs",
+      "title": "Scope",
+      "summary": "﻿# Test Report: Product Refactor Phase 6 (Overlay Stop + Prompt-Echo Guard)"
+    },
+    {
+      "path": ".logs/setup_20260501_184531.log",
+      "type": "logs",
+      "title": "setup_20260501_184531",
+      "summary": "Requirement already satisfied: pip in .\\.venv\\Lib\\site-packages (26.1)"
+    },
+    {
+      "path": "docs/real_runtime_checklist_gemini_parallel.md",
+      "type": "docs",
+      "title": "Preconditions",
+      "summary": "﻿# Real Runtime Checklist (Gemini Parallel)"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase5.md",
+      "type": "docs",
+      "title": "Automated checks",
+      "summary": "﻿# Test Report: Product Refactor Phase 5 (Logs Retention + Real-Test Checklist)"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase4.md",
+      "type": "docs",
+      "title": "Scope tested",
+      "summary": "﻿# Test Report: Product Refactor Phase 4 (Resume Checkpoint + Stop-Hardened Rewrite)"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase3.md",
+      "type": "docs",
+      "title": "Scope tested",
+      "summary": "﻿# Test Report: Product Refactor Phase 3 (Pool Status + Login Ready + Parallel Rewrite Runtime)"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase2.md",
+      "type": "docs",
+      "title": "Scope tested",
+      "summary": "﻿# Test Report: Product Refactor Phase 2 (Chrome Pool + Parallel Rewrite)"
+    },
+    {
+      "path": "docs/test_report_product_refactor_phase1.md",
+      "type": "docs",
+      "title": "Scope tested",
+      "summary": "﻿# Test Report: Product Refactor Phase 1 Foundations"
+    },
+    {
+      "path": "docs/docs_index_compact.md",
+      "type": "docs",
+      "title": "Core",
+      "summary": "﻿# Project Docs Index (Compact)"
+    },
+    {
+      "path": "docs/plan_product_web_refactor_localfile.md",
+      "type": "docs",
+      "title": "1) Muc tieu tong",
+      "summary": "﻿# Plan Product Rewrite Web (Local-File First, No Database)"
+    },
+    {
+      "path": "docs/plan_product_web_refactor_localfile.md",
+      "type": "plans",
+      "title": "1) Muc tieu tong",
+      "summary": "﻿# Plan Product Rewrite Web (Local-File First, No Database)"
+    },
+    {
+      "path": "docs/test_report_audio_pipeline.md",
+      "type": "docs",
+      "title": "Test matrix",
+      "summary": "﻿# Runtime Test Report"
+    },
+    {
+      "path": "docs/architecture_audio_pipeline.md",
+      "type": "docs",
+      "title": "Goal",
+      "summary": "﻿# Audio Pipeline Architecture (Current Scope)"
+    },
+    {
+      "path": "docs/architecture_auto_convert_text.md",
+      "type": "docs",
+      "title": "Auto Convert Text Architecture",
+      "summary": "Stage hien tai cua `auto_convert_text` chi lam:"
+    },
+    {
+      "path": "docs/chapter_url_list_flow.md",
+      "type": "docs",
+      "title": "Chapter URL List Flow (Per Project)",
+      "summary": "- Moi project co 1 danh sach URL chuong chinh de tai su dung."
+    },
+    {
+      "path": "docs/plan_breath_chunk_antileak.md",
+      "type": "docs",
+      "title": "Muc tieu",
+      "summary": "﻿# Plan: Breath Chunk + Anti-Leak + Prosody Quality Upgrade"
+    },
+    {
+      "path": "docs/plan_breath_chunk_antileak.md",
+      "type": "plans",
+      "title": "Muc tieu",
+      "summary": "﻿# Plan: Breath Chunk + Anti-Leak + Prosody Quality Upgrade"
+    },
+    {
+      "path": "docs/test_report_auto_convert_text.md",
+      "type": "docs",
+      "title": "Runtime Test Report: Auto Convert Text",
+      "summary": "Date: 2026-04-29"
+    },
+    {
+      "path": "docs/project_management_ui.md",
+      "type": "docs",
+      "title": "Project Management UI And Shared Registry",
+      "summary": "Date: 2026-04-29"
+    },
+    {
+      "path": "docs/architecture_rewrite_chunk_tts_export.md",
+      "type": "docs",
+      "title": "Architecture: Gemini Rewrite, Audio Clean, Chunk, TTS Export",
+      "summary": "Phase nay noi tiep sau collector:"
+    },
+    {
+      "path": "agens/flow_code_skill.md",
+      "type": "agent",
+      "title": "Quy tắt code cho dự án",
+      "summary": "- Dự án phải được code theo flow: lên plan => code => test và fixbug => viết doc, cập nhật readme, viết logs, cập nhật file .sh."
+    },
+    {
+      "path": "docs/plan_auto_convert_text_pipeline.md",
+      "type": "docs",
+      "title": "Plan Chi Tiet: Auto Convert Text Pipeline",
+      "summary": "Xay dung pipeline `auto_convert_text` doc lap. Muc tieu dot hien tai chi can:"
+    },
+    {
+      "path": "docs/plan_auto_convert_text_pipeline.md",
+      "type": "plans",
+      "title": "Plan Chi Tiet: Auto Convert Text Pipeline",
+      "summary": "Xay dung pipeline `auto_convert_text` doc lap. Muc tieu dot hien tai chi can:"
+    },
+    {
+      "path": "docs/audio_pipeline_web.md",
+      "type": "docs",
+      "title": "Run with one command",
+      "summary": "﻿# Audio Pipeline Web Controller"
+    },
+    {
+      "path": "docs/plan_audio_pipeline.md",
+      "type": "docs",
+      "title": "Phase 1 - Analyze rules and current repo",
+      "summary": "﻿# Development Plan"
+    },
+    {
+      "path": "docs/plan_audio_pipeline.md",
+      "type": "plans",
+      "title": "Phase 1 - Analyze rules and current repo",
+      "summary": "﻿# Development Plan"
+    }
+  ]
+}

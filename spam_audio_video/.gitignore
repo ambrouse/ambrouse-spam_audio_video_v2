@@ -1,0 +1,69 @@
+﻿# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+auto_text_to_voice/VieNeu-TTS/.venv-win/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+.logs/
+source_full/web_stdout.log
+source_full/web_stderr.log
+
+# Temporary scrape/debug files
+.tmp_*.html
+.tmp_backup_*/
+
+# Local runtime artifacts
+auto_text_to_voice/output/*.wav
+auto_text_to_voice/output/manifest.json
+source_full/audio/*.wav
+auto_convert_text/data/
+
+# Project workspace data (local only - do not push)
+projects_workspace/projects/
+projects_workspace/projects/**
+projects_workspace/runtime/video/models/
+projects_workspace/runtime/video/models/**
+projects_workspace/runtime/video_images_payload_*.json
+projects_workspace/runtime/video/smoke/
+projects_workspace/runtime/video/smoke/**
+projects_workspace/runtime/video/sd.exe
+projects_workspace/runtime/video/stable-diffusion.dll
+projects_workspace/runtime/video/bin/sd-runtime/
+projects_workspace/runtime/video/bin/sd-runtime/**
+projects_workspace/runtime/video/bin/sd-runtime.zip
+projects_workspace/runtime/video/bin/sd-win-avx2/
+projects_workspace/runtime/video/bin/sd-win-avx2/**
+
+# Runtime project registry/state (local only)
+project_registry/projects.json
+project_registry/chrome_pool_state.json
+
+# Optional: local prompt overrides generated at runtime
+projects_workspace/prompt_default/
+projects_workspace/prompt_default/**
+
+# Model cache / heavy data
+*.pt
+*.gguf
+.huggingface/
