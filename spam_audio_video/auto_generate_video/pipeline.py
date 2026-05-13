@@ -65,7 +65,7 @@ class VideoPipelineConfig:
     bridge_timeout_s: float = 600.0
     story_context: str = ""
     gemini_prompt_template: str = DEFAULT_VIDEO_GEMINI_PROMPT_TEMPLATE
-    video_encoder: str = "auto"
+    video_encoder: str = os.getenv("VIDEO_ENCODER", "auto")
     video_preset: str = "quality"
     video_crf: int = 18
     video_cq: int = 18
@@ -814,13 +814,9 @@ class VideoPipeline:
             "transition_seconds": transition_seconds,
             "requested_video_encoder": requested_encoder,
             "video_encoder": selected_encoder,
-            "gpu_fallback_used": selected_encoder == "libx264",
+            "gpu_fallback_used": False,
             "visual_overlay": visual_overlay,
-            "fallback_reason": (
-                "No supported FFmpeg GPU H.264 encoder was available."
-                if selected_encoder == "libx264" and requested_encoder in {"auto", "gpu", "nvenc", "qsv", "amf", "h264_nvenc", "h264_qsv", "h264_amf"}
-                else ""
-            ),
+            "fallback_reason": "",
             "render_workers": max_workers,
         }
         (dirs["manifests_dir"] / "render_manifest.json").write_text(
@@ -1883,13 +1879,18 @@ class VideoPipeline:
         available = self._list_ffmpeg_encoders()
         if normalized in {"libx264", "h264_nvenc", "h264_qsv", "h264_amf"}:
             if normalized == "libx264":
+                raise RuntimeError("CPU video encoder is disabled. Use a GPU H.264 encoder such as h264_nvenc.")
+            if normalized in available and self._probe_video_encoder(normalized):
                 return normalized
-            return normalized if normalized in available and self._probe_video_encoder(normalized) else "libx264"
+            raise RuntimeError(f"Requested GPU video encoder is not usable: {normalized}")
         if normalized in {"", "auto"}:
             for candidate in ("h264_nvenc", "h264_qsv", "h264_amf"):
                 if candidate in available and self._probe_video_encoder(candidate):
                     return candidate
-        return "libx264"
+        raise RuntimeError(
+            "GPU video encoder is required, but no supported FFmpeg hardware H.264 encoder is usable. "
+            "Install/update NVIDIA driver/FFmpeg NVENC support or choose a working hardware encoder."
+        )
 
     def _probe_video_encoder(self, encoder: str) -> bool:
         if encoder == "libx264":
@@ -1904,7 +1905,7 @@ class VideoPipeline:
             "-f",
             "lavfi",
             "-i",
-            "color=c=black:s=64x64:r=10",
+            "color=c=black:s=256x256:r=10",
             "-t",
             "0.2",
             "-an",

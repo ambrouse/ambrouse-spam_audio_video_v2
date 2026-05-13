@@ -239,6 +239,29 @@ Diễn biến cần minh họa:
 const DEFAULT_VIDEO_STORY_CONTEXT = "Manhua cinematic, khung hình ngang 16:9, không chữ trên hình, nhân vật nhất quán, bố cục rõ ràng, ưu tiên ảnh sắc nét, ánh sáng điện ảnh và không watermark.";
 const DEFAULT_BRIDGE_BASE_URL = 'http://127.0.0.1:8008';
 
+function normalizeBridgeBaseUrl(value) {
+  const rawValue = value ?? bridgeBaseUrlInput?.value ?? DEFAULT_BRIDGE_BASE_URL;
+  const raw = String(rawValue || '').trim() || DEFAULT_BRIDGE_BASE_URL;
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`;
+
+  try {
+    const url = new URL(candidate);
+    url.hash = '';
+    url.search = '';
+    const normalizedPath = url.pathname.replace(/\/+$/, '');
+    const normalized = `${url.protocol}//${url.host}${normalizedPath === '/' ? '' : normalizedPath}`;
+    if (bridgeBaseUrlInput) {
+      bridgeBaseUrlInput.value = normalized;
+    }
+    return normalized;
+  } catch (_error) {
+    if (bridgeBaseUrlInput) {
+      bridgeBaseUrlInput.value = DEFAULT_BRIDGE_BASE_URL;
+    }
+    return DEFAULT_BRIDGE_BASE_URL;
+  }
+}
+
 const VIDEO_PROD_PRESET = {
   scene_duration_seconds: 60,
   width: 3840,
@@ -1798,6 +1821,47 @@ function renderJsonOutput(el, data) {
   }
 }
 
+function renderTextOutput(el, text) {
+  if (el) {
+    el.value = String(text || '');
+  }
+}
+
+function summarizeGpuRuntime(status, actionResult = null) {
+  const gpus = Array.isArray(status?.nvidia_smi?.gpus) ? status.nvidia_smi.gpus : [];
+  const gpuLine = gpus.length
+    ? `GPU: CO - ${gpus.map((gpu) => `${gpu.name || 'NVIDIA GPU'} (${gpu.memory_total_mb || '?'} MB)`).join(', ')}`
+    : `GPU: KHONG thay qua nvidia-smi`;
+
+  const audioTorch = status?.audio_runtime?.torch || status?.torch || {};
+  const torchInstalled = audioTorch.installed !== false && !!(audioTorch.version || audioTorch.cuda_version || audioTorch.cuda_available);
+  const torchLine = torchInstalled
+    ? `PyTorch TTS: ${audioTorch.version || 'installed'} | CUDA: ${audioTorch.cuda_available ? 'CO' : 'KHONG'}${audioTorch.cuda_version ? ` (${audioTorch.cuda_version})` : ''}`
+    : `PyTorch TTS: CHUA CO (${audioTorch.error || 'not installed'})`;
+
+  const videoEncoder = String(
+    status?.video?.selected_encoder_auto || status?.ffmpeg?.selected_auto || status?.selected_encoder_auto || '?'
+  );
+  const videoUsesGpu = ['h264_nvenc', 'h264_qsv', 'h264_amf'].includes(videoEncoder);
+  const videoLine = `Video chay thuc te: ${videoUsesGpu ? `GPU (${videoEncoder})` : `CHUA SAN SANG GPU (${videoEncoder})`}`;
+
+  const audioUsesGpu = !!(audioTorch.cuda_available && audioTorch.cuda_version);
+  const audioLine = audioUsesGpu
+    ? `Audio chay thuc te: GPU CUDA`
+    : `Audio chay thuc te: KHONG chay CPU, se FAIL cho den khi cai CUDA torch`;
+
+  const conclusion = audioUsesGpu && videoUsesGpu
+    ? `Ket luan: audio + video deu san sang chay GPU.`
+    : `Ket luan: ${audioUsesGpu ? 'audio OK GPU' : 'audio chua OK GPU'}; ${videoUsesGpu ? 'video OK GPU' : 'video chua OK GPU'}.`;
+
+  const lines = [gpuLine, torchLine, audioLine, videoLine, conclusion];
+  const error = actionResult?.error || status?.audio_runtime?.runtime_probe_error || '';
+  if (error && !audioUsesGpu) {
+    lines.push(`Can xu ly: ${String(error).slice(0, 260)}`);
+  }
+  return lines.join('\n');
+}
+
 async function openBridgePorts() {
   const ports = parseBridgePorts();
   const result = await runJson('/api/bridge/open', {
@@ -1841,9 +1905,11 @@ async function testBridgeImage() {
 async function refreshGpuStatus() {
   const res = await fetch('/api/gpu/status');
   const data = await res.json();
-  renderJsonOutput(gpuStatusOutput, data);
-  const device = data?.torch?.cuda_available ? 'GPU detected' : 'No GPU, CPU fallback';
-  setStatus(`${device}. Video auto encoder: ${data?.video?.selected_encoder_auto || '?'}.`);
+  renderTextOutput(gpuStatusOutput, summarizeGpuRuntime(data));
+  const audioTorch = data?.audio_runtime?.torch || {};
+  const audioReady = !!(audioTorch.cuda_available && audioTorch.cuda_version);
+  const videoReady = ['h264_nvenc', 'h264_qsv', 'h264_amf'].includes(String(data?.video?.selected_encoder_auto || ''));
+  setStatus(`GPU status: audio ${audioReady ? 'CUDA OK' : 'CUDA missing'}, video ${videoReady ? data.video.selected_encoder_auto : 'not ready'}.`);
   return data;
 }
 
@@ -2682,10 +2748,6 @@ openGeminiBrowserBtn?.addEventListener('click', () => {
   openGeminiChromeManager().catch((error) => setStatus(`Open Gemini failed: ${error}`));
 });
 
-openGptPoolBtn?.addEventListener('click', () => {
-  openGptChromePoolManager().catch((error) => setStatus(`Open GPT bridge ports failed: ${error}`));
-});
-
 gptPoolStatusBtn?.addEventListener('click', async () => {
   await pingBridgePorts();
 });
@@ -2716,12 +2778,17 @@ gpuRefreshBtn?.addEventListener('click', () => {
 
 gpuPrewarmAudioBtn?.addEventListener('click', async () => {
   const result = await runJson('/api/gpu/prewarm-audio', {}, 'Prewarming Audio GPU');
-  renderJsonOutput(gpuStatusOutput, result.data || result);
+  const payload = result.data || result;
+  renderTextOutput(gpuStatusOutput, summarizeGpuRuntime(payload.gpu_status || {}, payload.result || payload));
+  setStatus(payload.success ? 'Audio CUDA prewarm OK.' : 'Audio CUDA prewarm failed.');
 });
 
 gpuCheckVideoBtn?.addEventListener('click', async () => {
   const result = await runJson('/api/gpu/check-video-encoder', {}, 'Checking Video Encoder');
-  renderJsonOutput(gpuStatusOutput, result.data || result);
+  const status = await refreshGpuStatus();
+  const payload = result.data || result;
+  const encoder = payload.selected_encoder_auto || payload.ffmpeg?.selected_auto || status?.video?.selected_encoder_auto || '?';
+  setStatus(payload.success ? `Video encoder OK: ${encoder}.` : `Video encoder failed: ${encoder}.`);
 });
 
 stopJobBtn?.addEventListener('click', () => {

@@ -68,8 +68,13 @@ bash setup.sh
 
 `setup.sh` will create local virtual environments, install web/TTS dependencies,
 install Playwright Chromium for browser automation, ensure `9router` is running,
-open Chrome debug port `9222` with GPT + `https://apptruyenchu.pro`, prewarm the
-TTS model, then start the web app.
+prepare the TTS model, then start the web app.
+
+### GPU defaults
+- Fresh clone does not need a `.env` file to choose GPU. `setup.sh` defaults to `SETUP_TTS_DEVICE=auto` and switches to CUDA PyTorch when `nvidia-smi` is available.
+- Runtime audio defaults to `SPAM_TTS_DEVICE=cuda`. If the TTS venv still has CPU-only PyTorch, the job fails with a clear CUDA error instead of silently running on CPU.
+- Video render is GPU-only in the production path. `auto` selects `h264_nvenc`, `h264_qsv`, or `h264_amf`; `libx264`/CPU is blocked.
+- Copy `.env.example` to `.env` only when you want explicit local settings such as port, bridge URL, or fixed model paths.
 
 ### First-run requirements
 - Windows: Python 3.12 is required for the prebuilt TTS wheels.
@@ -88,6 +93,7 @@ TTS model, then start the web app.
 - `GET /api/health` -> `{"ok": true}`
 - `GET /api/pipeline/audio/voices` -> folder-based profile list
 - `POST /api/pipeline/audio/run` -> pipeline success
+- `GET /api/gpu/status` -> concise audio/video GPU decision in UI
 - Download APIs return file attachments correctly
 
 ## Project Flow

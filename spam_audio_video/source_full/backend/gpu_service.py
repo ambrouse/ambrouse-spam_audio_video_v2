@@ -46,10 +46,14 @@ class GpuStatusService:
         return {"success": bool(result.get("ok")), "result": result, "gpu_status": self.status()}
 
     def check_video_encoder(self) -> dict:
+        try:
+            selected = self.video_service.pipeline._resolve_video_encoder("auto")  # pylint: disable=protected-access
+        except Exception as exc:
+            selected = f"unavailable: {exc}"
         return {
-            "success": True,
+            "success": not str(selected).startswith("unavailable:"),
             "ffmpeg": self._ffmpeg_info(),
-            "selected_encoder_auto": self.video_service.pipeline._resolve_video_encoder("auto"),  # pylint: disable=protected-access
+            "selected_encoder_auto": selected,
         }
 
     @staticmethod
@@ -98,12 +102,16 @@ class GpuStatusService:
         except Exception:
             encoders = []
         hardware = [name for name in ["h264_nvenc", "h264_qsv", "h264_amf"] if name in encoders]
+        try:
+            selected_auto = self.video_service.pipeline._resolve_video_encoder("auto")  # pylint: disable=protected-access
+        except Exception as exc:
+            selected_auto = f"unavailable: {exc}"
         return {
             "ffmpeg_bin": ffmpeg_bin,
             "exists": bool(shutil.which(ffmpeg_bin) or Path(ffmpeg_bin).exists()),
             "hardware_h264_encoders": hardware,
             "has_libx264": "libx264" in encoders,
-            "selected_auto": self.video_service.pipeline._resolve_video_encoder("auto"),  # pylint: disable=protected-access
+            "selected_auto": selected_auto,
         }
 
     @staticmethod

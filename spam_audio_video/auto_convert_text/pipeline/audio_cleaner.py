@@ -30,6 +30,31 @@ def clean_for_audio(text: str) -> str:
     text = unicodedata.normalize("NFC", text or "")
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"`([^`]*)`", r"\1", text)
+
+    out: list[str] = []
+    for ch in text:
+        if ch in {".", ",", "\n"}:
+            out.append(ch)
+            continue
+        if ch.isspace():
+            out.append(" ")
+            continue
+        if unicodedata.category(ch)[0] in {"L", "N"}:
+            out.append(ch)
+
+    cleaned = "".join(out)
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+    cleaned = re.sub(r" *\n+ *", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"\s+([.,])", r"\1", cleaned)
+    cleaned = re.sub(r"([.,])\s*([.,])+", r"\2", cleaned)
+    cleaned = re.sub(r",\s*\.", ".", cleaned)
+    cleaned = re.sub(r"\.\s*,", ".", cleaned)
+    cleaned = cleaned.strip(" ,.\n")
+    if cleaned and cleaned[-1] not in ".,":
+        cleaned += "."
+    return cleaned
+
     replacements = {
         "?": ".",
         "!": ".",

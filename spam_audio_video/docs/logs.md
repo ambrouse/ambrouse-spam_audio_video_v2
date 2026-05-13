@@ -1,5 +1,13 @@
 ﻿# Change Log (Compact)
 
+## 2026-05-14
+- GPU runtime hardened for production: audio defaults to CUDA and fails fast when the TTS venv has CPU-only PyTorch.
+- Video encoder selection is GPU-only; `auto` verifies hardware H.264 encoders and CPU `libx264` is blocked.
+- GPU Setting UI now shows a short runtime conclusion instead of raw JSON.
+- GPT/video config no longer opens ports; bridge port opening stays in the Bridge tab.
+- Added `.env.example` with GPU-safe defaults and wired `.env` loading for setup/web runtime.
+- Text cleanup/chunk/export now preserve only `.` and `,`; other punctuation is deleted instead of replaced.
+
 ## 2026-05-01
 - Phase 1: safe stop/emergency stop, run-all, logs + knowledge APIs, frontend controls.
 - Phase 2: parallel rewrite config, chrome pool open/close, frontend pool controls.

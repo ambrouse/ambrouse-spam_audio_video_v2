@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 import subprocess
 import threading
@@ -41,6 +42,13 @@ class AudioPipelineService:
         self.registry = SharedProjectRegistry(self.repo_root)
         self.project_store = ProjectStore(self.repo_root)
         self.project_store.migrate_legacy_projects()
+
+    @staticmethod
+    def _runtime_device() -> str:
+        device = str(os.environ.get("SPAM_TTS_DEVICE") or os.environ.get("SETUP_TTS_DEVICE") or "cuda").strip().lower()
+        if device not in {"cuda", "auto", "cpu"}:
+            device = "cuda"
+        return device
 
     def _resolve_session_audio_paths(self, project_id: str, session_id: str) -> tuple[Path, Path, Path]:
         session_dir = self._resolve_existing_session_dir(project_id, session_id)
@@ -222,7 +230,7 @@ class AudioPipelineService:
                 "max_chars": max(80, min(420, max_chars)),
                 "io_workers": max(1, min(6, int(tts_io_workers))),
                 "inference_timesteps": max(4, min(20, int(inference_timesteps))),
-                "device": "auto",
+                "device": self._runtime_device(),
                 "postprocess": bool(postprocess),
                 "noise_reduction": max(0.0, min(1.0, noise_reduction)),
                 "highpass_hz": max(20.0, min(250.0, highpass_hz)),
@@ -324,7 +332,7 @@ class AudioPipelineService:
         payload = {
             "cmd": "prewarm",
             "project_root": str((self.auto_ttv_root / "VieNeu-TTS").resolve()),
-            "device": "auto",
+            "device": self._runtime_device(),
             "model_key": self.model_key,
         }
         return self._send_worker(payload)
@@ -354,7 +362,7 @@ class AudioPipelineService:
             "cmd": "set_model",
             "model_key": model_key,
             "project_root": str((self.auto_ttv_root / "VieNeu-TTS").resolve()),
-            "device": "auto",
+            "device": self._runtime_device(),
         }
         return self._send_worker(payload)
 

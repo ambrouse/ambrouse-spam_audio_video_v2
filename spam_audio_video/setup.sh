@@ -4,6 +4,13 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$ROOT_DIR"
 
+if [[ -f "$ROOT_DIR/.env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT_DIR/.env"
+  set +a
+fi
+
 LOG_DIR="$ROOT_DIR/.logs"
 mkdir -p "$LOG_DIR"
 SETUP_LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
@@ -432,24 +439,27 @@ ensure_vieneu_venv_link() {
 validate_vieneu_runtime() {
   local venv_py="$1"
   local tts_root="$2"
+  local expected_device="${3:-auto}"
   if [[ ! -x "$venv_py" ]]; then
     return 1
   fi
-  "$venv_py" - <<PY >>"$SETUP_LOG" 2>&1
+  EXPECTED_TTS_DEVICE="$expected_device" "$venv_py" - <<'PY' >>"$SETUP_LOG" 2>&1
+import os
 import sys
-sys.path.insert(0, r"${tts_root}/src")
+sys.path.insert(0, os.path.join(os.getcwd(), "auto_text_to_voice", "VieNeu-TTS", "src"))
 import numpy
 import soundfile
 import torch
 import voxcpm
 import vieneu
+expected = os.environ.get("EXPECTED_TTS_DEVICE", "auto")
 print("VieNeu runtime OK")
 print("python=", sys.executable)
 print("torch=", torch.__version__)
 print("cuda_available=", torch.cuda.is_available())
 print("cuda_version=", torch.version.cuda)
-if torch.cuda.is_available():
-    assert torch.version.cuda is not None
+if expected == "cuda" and (not torch.cuda.is_available() or torch.version.cuda is None):
+    raise SystemExit("CUDA torch is required for TTS but current torch cannot use CUDA.")
 PY
 }
 
@@ -613,7 +623,7 @@ ensure_vieneu_runtime() {
   local llama_wheel_url="https://github.com/pnnbao97/VieNeu-TTS/releases/download/wheels-v0.3.16/llama_cpp_python-0.3.16-cp312-cp312-win_amd64.whl"
   local torch_index="https://download.pytorch.org/whl/cpu"
   local expect_device="cpu"
-  local requested_device="${SETUP_TTS_DEVICE:-cpu}"
+  local requested_device="${SETUP_TTS_DEVICE:-auto}"
   local system_py_version
 
   system_py_version="$(python_version_tuple "$TTS_SYSTEM_PYTHON")"
@@ -627,6 +637,17 @@ ensure_vieneu_runtime() {
   if [[ ! -f "$venv_py" && -f "${tts_root}/.venv/bin/python" ]]; then
     venv_dir="${tts_root}/.venv"
     venv_py="${venv_dir}/bin/python"
+  fi
+
+  if [[ "$requested_device" == "cuda" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    torch_index="https://download.pytorch.org/whl/cu128"
+    expect_device="cuda"
+  elif [[ "$requested_device" == "auto" ]] && command -v nvidia-smi >/dev/null 2>&1; then
+    torch_index="https://download.pytorch.org/whl/cu128"
+    expect_device="cuda"
+  elif [[ "$requested_device" == "cuda" ]]; then
+    echo "[ERROR] SETUP_TTS_DEVICE=cuda but nvidia-smi is not available. Install NVIDIA driver/CUDA runtime first."
+    exit 1
   fi
 
   if [[ -x "$venv_py" ]] && is_windows_host; then
@@ -644,7 +665,7 @@ ensure_vieneu_runtime() {
     fi
   fi
 
-  if [[ -x "$venv_py" ]] && validate_vieneu_runtime "$venv_py" "$tts_root"; then
+  if [[ -x "$venv_py" ]] && validate_vieneu_runtime "$venv_py" "$tts_root" "$expect_device"; then
     echo "Reusing valid VieNeu runtime: $venv_py" >>"$SETUP_LOG"
     PIPELINE_PY="$venv_py"
     return 0
@@ -682,14 +703,6 @@ ensure_vieneu_runtime() {
     exit 1
   fi
 
-  if [[ "$requested_device" == "cuda" ]] && command -v nvidia-smi >/dev/null 2>&1; then
-    torch_index="https://download.pytorch.org/whl/cu128"
-    expect_device="cuda"
-  elif [[ "$requested_device" == "auto" ]] && command -v nvidia-smi >/dev/null 2>&1; then
-    torch_index="https://download.pytorch.org/whl/cu128"
-    expect_device="cuda"
-  fi
-
   echo "Runtime target device: ${expect_device}" >>"$SETUP_LOG"
   run_quiet_or_fail "Upgrade VieNeu pip toolchain" "$venv_py" -m pip install --upgrade pip "setuptools<82" wheel --progress-bar on
 
@@ -702,12 +715,16 @@ ensure_vieneu_runtime() {
 
   run_quiet_or_fail "Install VieNeu minimal deps" "$venv_py" -m pip install sea-g2p onnxruntime requests numpy soundfile PyYAML librosa tqdm perth voxcpm transformers accelerate huggingface_hub --progress-bar on
   run_quiet_or_fail "Install VieNeu package" "$venv_py" -m pip install -e "$tts_root" --no-deps --progress-bar on
-  run_quiet_or_fail "Install torch + torchaudio" "$venv_py" -m pip install --index-url "$torch_index" torch torchaudio --progress-bar on
+  if [[ "$expect_device" == "cuda" ]]; then
+    run_quiet_or_fail "Install CUDA torch + torchaudio" "$venv_py" -m pip install --force-reinstall --index-url "$torch_index" torch torchaudio --progress-bar on
+  else
+    run_quiet_or_fail "Install torch + torchaudio" "$venv_py" -m pip install --index-url "$torch_index" torch torchaudio --progress-bar on
+  fi
   if [[ "$expect_device" == "cuda" ]]; then
     run_quiet_or_fail "Install CUDA runtime deps" "$venv_py" -m pip install --upgrade onnxruntime-gpu neucodec transformers accelerate --progress-bar on
   fi
 
-  if ! validate_vieneu_runtime "$venv_py" "$tts_root"; then
+  if ! validate_vieneu_runtime "$venv_py" "$tts_root" "$expect_device"; then
     echo "[ERROR] VieNeu runtime validation failed."
     tail -n 80 "$SETUP_LOG" || true
     exit 1

@@ -98,6 +98,13 @@ bash setup.sh
 
 Default web UI: `http://localhost:8080` (auto fallback if busy).
 
+GPU runtime defaults are GPU-first after clone:
+
+- `setup.sh` defaults `SETUP_TTS_DEVICE=auto`; when `nvidia-smi` is available it installs CUDA PyTorch for the TTS runtime.
+- the web audio runtime defaults to `SPAM_TTS_DEVICE=cuda`, so a CPU-only TTS environment fails loudly instead of silently running on CPU.
+- video render resolves to a hardware H.264 encoder (`h264_nvenc`, `h264_qsv`, or `h264_amf`); CPU `libx264` is blocked in the production path.
+- `.env` is optional. Copy `spam_audio_video/.env.example` only when you want explicit local overrides.
+
 ### 3) Bring up local browser bridge
 
 ```bash
@@ -123,6 +130,7 @@ curl http://127.0.0.1:8080/api/health
 | Unified Pipeline Studio | collect -> rewrite -> clean -> chunk -> TTS export -> video flow | End-to-end production in one place |
 | Project + Session Registry | Tracks per-project and per-session artifacts/status | Easy rerun, debug, and lifecycle control |
 | Voice Profile Runtime | Uses folder-based voice profiles and TTS manifests | Practical voice switching without code edits |
+| GPU Runtime Guard | TTS requires CUDA on GPU machines and video blocks CPU encode fallback | Prevents accidental slow CPU production runs |
 | Download + Clear APIs | Clear local artifacts and download generated files | Faster iteration and cleanup |
 | Browser CDP Bridge | Opens/reconnects Gemini/GPT tabs via local CDP | Stable web automation with your own logged-in sessions |
 | Fail-fast Port Policy | Exits with actionable errors on occupied/unreachable ports | Predictable runtime behavior |
@@ -158,6 +166,7 @@ curl http://127.0.0.1:8080/api/health
 
 Primary docs from story pipeline:
 
+- `spam_audio_video/docs/gpu_runtime_2026-05-14.md`
 - `spam_audio_video/docs/architecture_audio_pipeline.md`
 - `spam_audio_video/docs/architecture_auto_convert_text.md`
 - `spam_audio_video/docs/project_management_ui.md`

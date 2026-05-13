@@ -62,8 +62,16 @@ class WarmRuntime:
         self.tts = None
 
     def ensure_loaded(self, device: str) -> None:
+        runtime_device = device
+        if runtime_device == "auto":
+            try:
+                runtime_device = "cuda" if torch.cuda.is_available() else "cpu"
+            except Exception:
+                runtime_device = "cpu"
         if self.tts is not None:
-            return
+            if self.runtime_device == runtime_device:
+                return
+            self._close_tts()
         # VoxCPM uses torchaudio.load internally. On this Windows runtime,
         # torchaudio's torchcodec path can fail due missing FFmpeg DLLs.
         # Patch load() to a stable soundfile implementation.
@@ -75,13 +83,15 @@ class WarmRuntime:
 
         torchaudio.load = _safe_torchaudio_load  # type: ignore[assignment]
 
-        runtime_device = device
-        if runtime_device == "auto":
-            try:
-                import torch  # type: ignore
-                runtime_device = "cuda" if torch.cuda.is_available() else "cpu"
-            except Exception:
-                runtime_device = "cpu"
+        if runtime_device == "cuda":
+            cuda_available = bool(torch.cuda.is_available())
+            cuda_version = getattr(torch.version, "cuda", None)
+            if not cuda_available or not cuda_version:
+                raise RuntimeError(
+                    "CUDA TTS runtime is required, but this Python environment is using CPU-only torch. "
+                    f"torch={getattr(torch, '__version__', 'unknown')}, cuda_available={cuda_available}, cuda_version={cuda_version}. "
+                    "Reinstall the TTS runtime with CUDA torch, then restart the web backend."
+                )
         model_cfg = self.model_catalog[self.model_key]
         if model_cfg["runtime_mode"] != "voxcpm":
             raise RuntimeError(f"Unsupported runtime mode: {model_cfg['runtime_mode']}")

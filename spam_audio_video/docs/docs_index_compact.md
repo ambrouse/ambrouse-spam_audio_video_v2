@@ -16,6 +16,7 @@
 - `docs/plan_breath_chunk_antileak.md`: quality optimization plan.
 
 ## Runtime / Ops
+- `docs/gpu_runtime_2026-05-14.md`: current GPU-only audio/video runtime contract and clone defaults.
 - `docs/test_report_audio_pipeline.md`: runtime validations for audio stage.
 - `docs/test_report_auto_convert_text.md`: runtime validations for convert stage.
 - `docs/test_report_video_pipeline.md`: runtime validations for video stage.
@@ -29,5 +30,6 @@
 ## Active Direction (Current)
 1. Project-first UX + session-first operations.
 2. Full run-all orchestration with safe stop.
-3. Logs governance and knowledge hub.
-4. Bounded-growth architecture (no infinite auto growth, no runtime backup).
+3. GPU-only production runtime for TTS/video: fail fast when CUDA/NVENC path is not ready.
+4. Browser bridge owns port opening; GPT/video config only references bridge ports.
+5. Logs governance and knowledge hub.

@@ -52,7 +52,7 @@ convert_lock = threading.Lock()
 @app.middleware("http")
 async def disable_api_cache(request: Request, call_next):
     response: Response = await call_next(request)
-    if request.url.path.startswith("/api/"):
+    if request.url.path == "/" or request.url.path.startswith("/api/") or request.url.path.startswith("/assets/"):
         response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"

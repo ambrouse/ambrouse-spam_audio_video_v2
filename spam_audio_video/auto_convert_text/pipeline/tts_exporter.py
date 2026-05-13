@@ -119,7 +119,7 @@ def _split_into_sentences(text: str) -> list[str]:
     if not compact:
         return []
 
-    parts = re.split(r"(?<=[.!?])\s+", compact)
+    parts = re.split(r"(?<=\.)\s+", compact)
     out: list[str] = []
     for part in parts:
         piece = part.strip(" ,")
@@ -135,16 +135,21 @@ def _suggest_pause_ms(chunk: str) -> int:
         return 240
     if text.endswith(","):
         return 140
-    if text.endswith(";") or text.endswith(":"):
-        return 260
-    if text.endswith(".") or text.endswith("!") or text.endswith("?"):
+    if text.endswith("."):
         return 340
     return 220
 
 
 def _sanitize_tts_input_text(text: str) -> str:
     text = (text or "").replace("\r\n", " ").replace("\n", " ").replace("\r", " ")
-    return " ".join(text.split()).strip()
+    out: list[str] = []
+    for ch in text:
+        if ch in {".", ","} or ch.isspace() or ch.isalnum():
+            out.append(ch)
+    compact = " ".join("".join(out).split()).strip(" ,.")
+    if compact and compact[-1] not in ".,":
+        compact += "."
+    return compact
 
 
 def _load_breath_manifest(project_dir: Path) -> list[dict]:

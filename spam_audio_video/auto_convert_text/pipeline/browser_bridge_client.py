@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -8,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 import httpx
 
 
-DEFAULT_BRIDGE_BASE_URL = "http://127.0.0.1:8008"
+DEFAULT_BRIDGE_BASE_URL = os.getenv("BRIDGE_BASE_URL", "http://127.0.0.1:8008").strip() or "http://127.0.0.1:8008"
 
 
 class BrowserBridgeError(RuntimeError):

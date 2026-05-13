@@ -1,5 +1,14 @@
 # Plan: Refactor spam_audio_video sang bridge toll-brouser-gpt-gemini, GPU-first, chunk audio 16-64 tu
 
+## Cap nhat 2026-05-14
+
+- Huong GPU-first da duoc sieu lai thanh GPU-only cho production audio/video.
+- Audio runtime mac dinh CUDA; neu TTS venv dang la CPU-only PyTorch thi job fail ro loi thay vi chay CPU.
+- Video render khong fallback `libx264`; `auto` phai chon duoc encoder GPU (`h264_nvenc`, `h264_qsv`, `h264_amf`).
+- Clean/chunk/export TTS chi giu dau `.` va `,`; cac dau khac bi xoa, khong replace sang dau nghi.
+- Mo port GPT/Gemini chi con nam o tab Bridge; tab GPT/video chi cau hinh ports de dung bridge.
+- `.env` la tuy chon. Clone moi van tu nhan GPU neu `nvidia-smi` co san.
+
 ## 1. Muc tieu
 
 Sua `spam_audio_video` de pipeline moi chay theo huong:

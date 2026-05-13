@@ -31,11 +31,11 @@ def _split_pause_pieces(text: str) -> list[TextPiece]:
         return []
     pieces: list[TextPiece] = []
     start = 0
-    for match in re.finditer(r"[.;,]", compact):
+    for match in re.finditer(r"[.,]", compact):
         end = match.end()
         piece = _normalize_piece(compact[start:end])
         if piece:
-            boundary = {"." : "sentence", ";" : "semicolon", "," : "comma"}.get(match.group(0), "punctuation")
+            boundary = {"." : "sentence", "," : "comma"}.get(match.group(0), "punctuation")
             pieces.append(TextPiece(piece, _word_count(piece), boundary))
         start = end
     tail = _normalize_piece(compact[start:])
@@ -53,8 +53,8 @@ def _split_long_piece(piece: TextPiece, max_words: int) -> list[TextPiece]:
     while start < len(words):
         end = min(len(words), start + max_words)
         chunk_words = words[start:end]
-        text = " ".join(chunk_words).strip(" ,;")
-        if text and text[-1] not in ".,;":
+        text = " ".join(chunk_words).strip(" ,")
+        if text and text[-1] not in ".,":
             text += "," if end < len(words) else "."
         chunks.append(TextPiece(text, _word_count(text), "word_limit"))
         start = end
@@ -108,7 +108,7 @@ class SimpleChunker:
                     "text": text,
                     "word_count": _word_count(text),
                     "boundary_reason": reason,
-                    "punctuation_end": text[-1] if text[-1] in ".,;" else "",
+                    "punctuation_end": text[-1] if text[-1] in ".," else "",
                 })
             current_parts = []
             current_words = 0
@@ -122,7 +122,7 @@ class SimpleChunker:
                         "text": part.text,
                         "word_count": part.words,
                         "boundary_reason": "oversize",
-                        "punctuation_end": part.text[-1] if part.text and part.text[-1] in ".,;" else "",
+                        "punctuation_end": part.text[-1] if part.text and part.text[-1] in ".," else "",
                     })
                     continue
                 if not current_parts:
@@ -135,13 +135,13 @@ class SimpleChunker:
                     if current_words + part.words <= max_words:
                         current_parts.append(part)
                         current_words += part.words
-                        if current_words >= min_words and part.boundary in {"sentence", "semicolon"}:
+                        if current_words >= min_words and part.boundary == "sentence":
                             flush_chunk(part.boundary)
                         continue
                 flush_chunk("max_words")
                 current_parts = [part]
                 current_words = part.words
-                if current_words >= min_words and part.boundary in {"sentence", "semicolon"}:
+                if current_words >= min_words and part.boundary == "sentence":
                     flush_chunk(part.boundary)
 
         for file_idx, chapter_path in enumerate(chapter_files, start=1):

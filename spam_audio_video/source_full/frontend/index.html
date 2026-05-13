@@ -341,11 +341,11 @@
                 <button id="gpuPrewarmAudioBtn" class="btn-secondary" type="button">Prewarm Audio</button>
                 <button id="gpuCheckVideoBtn" class="btn-secondary" type="button">Check Video Encoder</button>
               </div>
-              <p class="hint-line">Audio/video will use GPU when detected, and only fallback CPU when no GPU path is available.</p>
+              <p class="hint-line">Shows the real runtime decision for audio and video.</p>
             </div>
             <div>
               <h4>Status</h4>
-              <textarea id="gpuStatusOutput" rows="14" readonly></textarea>
+              <textarea id="gpuStatusOutput" rows="8" readonly></textarea>
             </div>
           </div>
         </div>
@@ -427,12 +427,11 @@
                   <input id="videoMotionIntensityInput" type="number" min="0.005" max="0.18" step="0.005" value="0.06" />
                 </div>
                 <div class="span-2">
-                  <label for="videoGptPortsInput">GPT ports (comma separated)</label>
+                  <label for="videoGptPortsInput">Bridge ports for GPT</label>
                   <input id="videoGptPortsInput" type="text" value="9222,9223,9224" />
                 </div>
               </div>
               <div class="button-row">
-                <button id="openGptPoolBtn" class="btn-secondary" type="button">Open GPT Ports</button>
                 <button id="gptPoolStatusBtn" class="btn-secondary" type="button">Check GPT Port Status</button>
                 <button id="videoRefreshBtn" class="btn-secondary" type="button">Refresh Video Files</button>
               </div>
