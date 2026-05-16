@@ -325,3 +325,47 @@ async def test_wait_for_answer_returns_when_stream_flag_stale(monkeypatch, serve
 	)
 
 	assert answer == 'final answer'
+
+
+@pytest.mark.asyncio
+async def test_wait_for_images_fails_on_text_only_response(monkeypatch, server_module):
+	service = server_module.GeminiBridgeService(
+		server_module.ServiceConfig.from_env(
+			provider='gpt',
+			display_name='ChatGPT',
+			default_hosts='chatgpt.com,chat.openai.com',
+			default_open_url='https://chatgpt.com/',
+			supports_mode=False,
+		)
+	)
+	service.cfg.poll_interval_s = 0.01
+
+	async def fake_snapshot_images(_session):
+		return {
+			'errorTexts': [],
+			'imageCount': 0,
+			'imageCandidates': [],
+			'isStreaming': False,
+		}
+
+	async def fake_snapshot(_session):
+		return {
+			'responseCount': 1,
+			'lastResponseText': 'I cannot generate that image, but here is a description.',
+		}
+
+	monkeypatch.setattr(service, '_snapshot_images', fake_snapshot_images)
+	monkeypatch.setattr(service, '_snapshot', fake_snapshot)
+
+	with pytest.raises(server_module.AutomationError) as error_info:
+		await service._wait_for_images(
+			session=object(),
+			baseline_count=0,
+			baseline_candidates=[],
+			baseline_response_count=0,
+			baseline_last_text='',
+			desired_count=1,
+			timeout_s=0.02,
+		)
+
+	assert error_info.value.code == 'GPT_IMAGE_TEXT_RESPONSE'

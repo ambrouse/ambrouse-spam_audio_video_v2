@@ -1,0 +1,51 @@
+name: Validate Skills
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  validate-skills:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Codex and GitHub skills
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          foreach ($root in @(".codex/skills", ".github/skills")) {
+            $skillDirs = Get-ChildItem $root -Directory
+            if ($skillDirs.Count -eq 0) {
+              throw "No skill directories found in $root."
+            }
+
+            foreach ($dir in $skillDirs) {
+              $skillFile = Join-Path $dir.FullName "SKILL.md"
+              if (!(Test-Path $skillFile)) {
+                throw "Missing SKILL.md in $($dir.FullName)"
+              }
+
+              $lines = Get-Content -Encoding UTF8 $skillFile
+              $frontmatterEnd = [array]::IndexOf($lines, "---", 1)
+              if ($lines[0] -ne "---" -or $frontmatterEnd -lt 2) {
+                throw "Invalid YAML frontmatter in $skillFile"
+              }
+
+              if (!(Select-String -Path $skillFile -Pattern "^name:\s*.+" -Quiet)) {
+                throw "Missing name in $skillFile"
+              }
+
+              if (!(Select-String -Path $skillFile -Pattern "^description:\s*.+" -Quiet)) {
+                throw "Missing description in $skillFile"
+              }
+
+              if (!(Select-String -Path $skillFile -Pattern "^user-invocable:\s*true\s*$" -Quiet)) {
+                throw "Missing user-invocable true in $skillFile"
+              }
+            }
+          }

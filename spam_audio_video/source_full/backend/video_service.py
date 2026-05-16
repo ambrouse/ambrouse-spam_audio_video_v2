@@ -36,7 +36,7 @@ class VideoPipelineService:
         if image_provider in {"gpt_web", "gpt"}:
             image_provider = "bridge_gpt"
         cfg = VideoPipelineConfig(
-            scene_duration_seconds=float(payload.get("scene_duration_seconds") or 60.0),
+            scene_duration_seconds=float(payload.get("scene_duration_seconds") or 30.0),
             width=int(payload.get("width") or 1280),
             height=int(payload.get("height") or 720),
             fps=int(payload.get("fps") or 24),
@@ -45,6 +45,10 @@ class VideoPipelineService:
             image_provider=image_provider,
             cdp_url=payload.get("cdp_url"),
             cdp_urls=payload.get("cdp_urls"),
+            gemini_cdp_url=payload.get("gemini_cdp_url"),
+            gemini_cdp_urls=payload.get("gemini_cdp_urls"),
+            gpt_cdp_url=payload.get("gpt_cdp_url"),
+            gpt_cdp_urls=payload.get("gpt_cdp_urls"),
             prompt_parallel_workers=int(payload.get("prompt_parallel_workers") or 1),
             prompt_delay_seconds=float(payload.get("prompt_delay_seconds") or 0.6),
             sd_model_path=payload.get("sd_model_path"),
@@ -63,7 +67,7 @@ class VideoPipelineService:
             story_context=str(payload.get("story_context") or ""),
             gemini_prompt_template=str(payload.get("gemini_prompt_template") or DEFAULT_VIDEO_GEMINI_PROMPT_TEMPLATE),
             video_encoder=str(payload.get("video_encoder") or "auto"),
-            video_preset=str(payload.get("video_preset") or "quality"),
+            video_preset=str(payload.get("video_preset") or os.getenv("VIDEO_PRESET", "quality") or "quality"),
             video_crf=int(payload.get("video_crf") or 18),
             video_cq=int(payload.get("video_cq") or 18),
             render_workers=int(payload.get("render_workers") or os.getenv("VIDEO_RENDER_WORKERS", "6") or 6),
@@ -197,7 +201,7 @@ class VideoPipelineService:
     def prewarm(self, sd_executable: str | None = None, sd_model_path: str | None = None) -> dict:
         return self.pipeline.prewarm(sd_executable=sd_executable, sd_model_path=sd_model_path)
 
-    def analyze(self, project_id: str, session_id: str, scene_duration_seconds: float = 60.0) -> dict:
+    def analyze(self, project_id: str, session_id: str, scene_duration_seconds: float = 30.0) -> dict:
         return self.pipeline.analyze_session(project_id, session_id, scene_duration_seconds)
 
     def run_prompts(

@@ -25,20 +25,27 @@ def _normalize_piece(text: str) -> str:
     return " ".join((text or "").split()).strip()
 
 
+def _sanitize_chunk_text(text: str) -> str:
+    compact = _normalize_piece((text or "").replace(",", " "))
+    compact = re.sub(r"\s+\.", ".", compact)
+    compact = re.sub(r"\.+", ".", compact)
+    compact = compact.strip(" .")
+    return f"{compact}." if compact else ""
+
+
 def _split_pause_pieces(text: str) -> list[TextPiece]:
-    compact = _normalize_piece(text)
+    compact = _normalize_piece((text or "").replace(",", " "))
     if not compact:
         return []
     pieces: list[TextPiece] = []
     start = 0
-    for match in re.finditer(r"[.,]", compact):
+    for match in re.finditer(r"\.", compact):
         end = match.end()
-        piece = _normalize_piece(compact[start:end])
+        piece = _sanitize_chunk_text(compact[start:end])
         if piece:
-            boundary = {"." : "sentence", "," : "comma"}.get(match.group(0), "punctuation")
-            pieces.append(TextPiece(piece, _word_count(piece), boundary))
+            pieces.append(TextPiece(piece, _word_count(piece), "sentence"))
         start = end
-    tail = _normalize_piece(compact[start:])
+    tail = _sanitize_chunk_text(compact[start:])
     if tail:
         pieces.append(TextPiece(tail, _word_count(tail), "tail"))
     return pieces
@@ -53,9 +60,7 @@ def _split_long_piece(piece: TextPiece, max_words: int) -> list[TextPiece]:
     while start < len(words):
         end = min(len(words), start + max_words)
         chunk_words = words[start:end]
-        text = " ".join(chunk_words).strip(" ,")
-        if text and text[-1] not in ".,":
-            text += "," if end < len(words) else "."
+        text = _sanitize_chunk_text(" ".join(chunk_words))
         chunks.append(TextPiece(text, _word_count(text), "word_limit"))
         start = end
     return chunks
@@ -75,7 +80,8 @@ class SimpleChunker:
         clear_old: bool = True,
         progress_callback: Callable[[dict], None] | None = None,
     ) -> dict:
-        min_words = max(1, int(min_words))
+        requested_min_words = int(min_words)
+        min_words = max(30, requested_min_words)
         max_words = max(min_words, int(max_words))
         session_dir = self.store.session_dir(project_id, session_id)
         source_dir = session_dir / "chapters_text" / "audio_clean"
@@ -102,13 +108,13 @@ class SimpleChunker:
             nonlocal current_parts, current_words
             if not current_parts:
                 return
-            text = _normalize_piece(" ".join(part.text for part in current_parts)).strip()
+            text = _sanitize_chunk_text(" ".join(part.text for part in current_parts))
             if text:
                 chunks.append({
                     "text": text,
                     "word_count": _word_count(text),
                     "boundary_reason": reason,
-                    "punctuation_end": text[-1] if text[-1] in ".," else "",
+                    "punctuation_end": ".",
                 })
             current_parts = []
             current_words = 0
@@ -122,7 +128,7 @@ class SimpleChunker:
                         "text": part.text,
                         "word_count": part.words,
                         "boundary_reason": "oversize",
-                        "punctuation_end": part.text[-1] if part.text and part.text[-1] in ".," else "",
+                        "punctuation_end": ".",
                     })
                     continue
                 if not current_parts:
@@ -163,6 +169,7 @@ class SimpleChunker:
         items: list[dict] = []
         for idx, chunk in enumerate(chunks, start=1):
             chunk_text = str(chunk["text"]).strip()
+            chunk_text = _sanitize_chunk_text(chunk_text)
             chunk_name = f"chunk_{idx:04d}.txt"
             tts_name = f"text_{idx:04d}.txt"
             chunk_path = chunk_dir / chunk_name
@@ -183,14 +190,18 @@ class SimpleChunker:
             "project_id": project_id,
             "session_id": session_id,
             "updated_at": utc_now_iso(),
+            "requested_min_words": requested_min_words,
             "min_words": min_words,
             "max_words": max_words,
+            "punctuation_policy": "period_only",
             "summary": {
                 "chapters": len(chapter_files),
                 "chunks": len(items),
                 "tts_inputs": len(items),
                 "below_min_words": sum(1 for item in items if int(item["word_count"]) < min_words),
                 "above_max_words": sum(1 for item in items if int(item["word_count"]) > max_words),
+                "non_period_endings": sum(1 for item in items if item.get("punctuation_end") != "."),
+                "comma_violations": sum(1 for chunk in chunks if "," in str(chunk.get("text") or "")),
             },
             "items": items,
         }

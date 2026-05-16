@@ -16,7 +16,7 @@ mkdir -p "$LOG_DIR"
 SETUP_LOG="$LOG_DIR/setup_$(date +%Y%m%d_%H%M%S).log"
 
 STEP_INDEX=0
-STEP_TOTAL=10
+STEP_TOTAL=11
 STEP_TASK_DONE=0
 STEP_TASK_TOTAL=1
 STEP_TITLE=""
@@ -40,35 +40,83 @@ else
   C_BLUE=""
 fi
 
+usage() {
+  cat <<'EOF'
+Usage:
+  bash setup.sh [options]
+
+Options:
+  --install-only                 Install/validate runtime without starting the web controller.
+  --yes, -y                      Answer yes to setup prompts.
+  --production-validate          Run real one-chunk VoxCPM production validation.
+  --skip-production-validation   Skip production validation.
+  --tts-device auto|cuda|cpu     Select TTS runtime target. Default: auto.
+  --help, -h                     Show this help.
+
+Environment:
+  SETUP_INSTALL_ONLY=1
+  SETUP_ASSUME_YES=1
+  SETUP_PRODUCTION_VALIDATE=1
+  SETUP_SKIP_PRODUCTION_VALIDATE=1
+  SETUP_TTS_DEVICE=auto|cuda|cpu
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --install-only)
+      export SETUP_INSTALL_ONLY=1
+      ;;
+    --yes|-y)
+      export SETUP_ASSUME_YES=1
+      ;;
+    --production-validate)
+      export SETUP_PRODUCTION_VALIDATE=1
+      ;;
+    --skip-production-validation)
+      export SETUP_SKIP_PRODUCTION_VALIDATE=1
+      ;;
+    --tts-device)
+      shift
+      if [[ $# -eq 0 ]]; then
+        echo "[ERROR] --tts-device requires auto, cuda, or cpu."
+        exit 1
+      fi
+      export SETUP_TTS_DEVICE="$1"
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "[ERROR] Unknown option: $1"
+      usage
+      exit 1
+      ;;
+  esac
+  shift
+done
+
+if [[ "${SETUP_INSTALL_ONLY:-0}" == "1" ]]; then
+  STEP_TOTAL=9
+fi
+
 UTF8_OK=0
 case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
   *UTF-8*|*utf8*|*utf-8*) UTF8_OK=1 ;;
 esac
 
 icon() {
-  if [[ "$UTF8_OK" -eq 1 ]]; then
-    case "$1" in
-      ok) printf "✓" ;;
-      run) printf "⏳" ;;
-      fail) printf "✗" ;;
-      info) printf "•" ;;
-      rocket) printf "🚀" ;;
-      port) printf "🔌" ;;
-      *) printf "•" ;;
-    esac
-  else
-    case "$1" in
-      ok) printf "[OK]" ;;
-      run) printf "[..]" ;;
-      fail) printf "[X]" ;;
-      info) printf "[i]" ;;
-      rocket) printf "[>]" ;;
-      port) printf "[#]" ;;
-      *) printf "[*]" ;;
-    esac
-  fi
+  case "$1" in
+    ok) printf "[OK]" ;;
+    run) printf "[..]" ;;
+    fail) printf "[X]" ;;
+    info) printf "[i]" ;;
+    rocket) printf "[>]" ;;
+    port) printf "[#]" ;;
+    *) printf "[*]" ;;
+  esac
 }
-
 pad_right() {
   local text="$1"
   local width="$2"
@@ -136,6 +184,26 @@ print_header() {
   echo "  ██║  ██║██║ ╚═╝ ██║██████╔╝██║  ██║╚██████╔╝╚██████╔╝███████║███████╗"
   echo "  ╚═╝  ╚═╝╚═╝     ╚═╝╚═════╝ ╚═╝  ╚═╝ ╚═════╝  ╚═════╝ ╚══════╝╚══════╝"
   echo
+  echo
+  printf "+%s+\n" "$border"
+  printf "| %s |\n" "$(pad_right "$title" "$inner")"
+  printf "+%s+\n" "$border"
+  printf "| %s |\n" "$(pad_right "$root_line" "$inner")"
+  printf "| %s |\n" "$(pad_right "$log_line" "$inner")"
+  printf "+%s+\n" "$border"
+  echo
+}
+
+print_header_clean() {
+  local cols inner border title root_line log_line
+  cols="$(term_cols)"
+  inner=$(( cols - 4 ))
+  border="$(printf '%*s' "$inner" '' | tr ' ' '=')"
+
+  title="$(truncate_text "Ambrouse Audio Pipeline Setup" "$inner")"
+  root_line="$(truncate_text "Root: $ROOT_DIR" "$inner")"
+  log_line="$(truncate_text "Log : $SETUP_LOG" "$inner")"
+
   echo
   printf "+%s+\n" "$border"
   printf "| %s |\n" "$(pad_right "$title" "$inner")"
@@ -238,7 +306,7 @@ ask_yes_no() {
 }
 
 is_windows_host() {
-  [[ "$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OS" == "Windows_NT" ]]
+  [[ "${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OS:-}" == "Windows_NT" ]]
 }
 
 candidate_exists() {
@@ -379,7 +447,7 @@ short_vieneu_venv_dir() {
     return
   fi
 
-  if [[ ("$OSTYPE" == msys* || "$OSTYPE" == cygwin* || "$OS" == "Windows_NT") && -n "$(command -v cygpath || true)" ]]; then
+  if [[ ("${OSTYPE:-}" == msys* || "${OSTYPE:-}" == cygwin* || "${OS:-}" == "Windows_NT") && -n "$(command -v cygpath || true)" ]]; then
     local repo_win repo_hash drive_letter drive_mount
     repo_win="$(cygpath -m "$(pwd)")"
     repo_hash="$(printf "%s" "$repo_win" | sha1sum | awk '{print substr($1,1,8)}')"
@@ -479,6 +547,118 @@ import imageio_ffmpeg
 print("Web runtime OK")
 print("python=", sys.executable)
 PY
+}
+
+write_setup_validation_fixture() {
+  local session_dir="./projects_workspace/projects/setup-validation/sessions/setup-validation-session"
+  rm -rf "./projects_workspace/projects/setup-validation"
+  mkdir -p "${session_dir}/tts_inputs"
+  cat >"${session_dir}/session.json" <<'JSON'
+{
+  "project_id": "setup-validation",
+  "session_id": "setup-validation-session",
+  "name": "Setup validation",
+  "status": "ready"
+}
+JSON
+  cat >"${session_dir}/tts_inputs/text_0001.txt" <<'TXT'
+Thien Dau de quoc Thanh Hon thon. Ngay hom nay la le thuc tinh vo hon hang nam.
+TXT
+}
+
+validate_latest_setup_audio_benchmark() {
+  "$WEB_PY" - <<'PY' >>"$SETUP_LOG" 2>&1
+import audioop
+import json
+import math
+import wave
+from pathlib import Path
+
+root = Path("benchmarks/setup_validation")
+if not root.exists():
+    raise SystemExit("Missing setup validation benchmark directory.")
+runs = sorted((p for p in root.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime)
+if not runs:
+    raise SystemExit("No setup validation benchmark runs found.")
+latest = runs[-1]
+report = json.loads((latest / "reports" / "benchmark.json").read_text(encoding="utf-8"))
+if not report.get("success"):
+    raise SystemExit("Setup validation benchmark did not succeed.")
+config = report.get("config") or {}
+if config.get("temperature") != 0.05 or config.get("postprocess") is not False:
+    raise SystemExit(f"Unexpected benchmark quality config: {config}")
+combined = latest / "output" / "combined.wav"
+if not combined.exists():
+    raise SystemExit(f"Missing combined WAV: {combined}")
+with wave.open(str(combined), "rb") as wav:
+    frames = wav.getnframes()
+    rate = wav.getframerate()
+    width = wav.getsampwidth()
+    data = wav.readframes(frames)
+duration = frames / rate if rate else 0
+if duration < 1.0:
+    raise SystemExit(f"Combined WAV is too short: {duration:.3f}s")
+full_scale = (2 ** (8 * width - 1)) - 1
+peak = audioop.max(data, width)
+rms = audioop.rms(data, width)
+peak_dbfs = 20 * math.log10(max(peak, 1) / full_scale)
+rms_dbfs = 20 * math.log10(max(rms, 1) / full_scale)
+print(f"Setup validation WAV OK: duration={duration:.3f}s peak={peak_dbfs:.2f}dBFS rms={rms_dbfs:.2f}dBFS")
+if peak_dbfs > -0.5:
+    raise SystemExit(f"Audio is too close to clipping: peak={peak_dbfs:.2f}dBFS")
+if rms_dbfs > -8.0:
+    raise SystemExit(f"Audio is unexpectedly hot: rms={rms_dbfs:.2f}dBFS")
+PY
+}
+
+run_production_validation() {
+  if [[ "${SETUP_SKIP_PRODUCTION_VALIDATE:-0}" == "1" ]]; then
+    echo "SETUP_SKIP_PRODUCTION_VALIDATE=1, production validation skipped." >>"$SETUP_LOG"
+    step_tick
+    step_tick
+    step_tick
+    step_tick
+    return 0
+  fi
+  if [[ "${SETUP_PRODUCTION_VALIDATE:-ask}" != "1" && "${CI:-0}" != "1" && "${SETUP_ASSUME_YES:-0}" != "1" ]]; then
+    if ! ask_yes_no "Run a real one-chunk production TTS validation now? This verifies model/runtime/audio output." "y"; then
+      echo "Production validation skipped by user." >>"$SETUP_LOG"
+      step_tick
+      step_tick
+      step_tick
+      step_tick
+      return 0
+    fi
+  fi
+
+  write_setup_validation_fixture
+  run_quiet_or_fail "Compile production Python modules" "$WEB_PY" -m py_compile \
+    auto_convert_text/pipeline/audio_cleaner.py \
+    auto_convert_text/pipeline/simple_chunker.py \
+    source_full/backend/pipeline_service.py \
+    auto_text_to_voice/vieneu_worker.py \
+    tools/benchmark_tts_pipeline.py
+  run_quiet_or_fail "Run unit tests" "$WEB_PY" -m unittest discover -s tests
+  run_quiet_or_fail "Run real TTS production validation" "$WEB_PY" tools/benchmark_tts_pipeline.py \
+    --project-id setup-validation \
+    --session-id setup-validation-session \
+    --voice-profile su-review \
+    --model-key voxcpm_vn \
+    --temperature 0.05 \
+    --top-k 80 \
+    --tts-io-workers 2 \
+    --inference-timesteps 8 \
+    --no-cache \
+    --text-limit 1 \
+    --scenario setup_validation_tts \
+    --artifact-root benchmarks/setup_validation
+  if ! validate_latest_setup_audio_benchmark; then
+    printf "\n%s %sProduction WAV validation failed.%s\n" "$(icon fail)" "$C_RED" "$C_RESET"
+    echo "Recent log lines:"
+    tail -n 80 "$SETUP_LOG" || true
+    exit 1
+  fi
+  step_tick
 }
 
 ensure_9router() {
@@ -757,7 +937,7 @@ PY
   return 1
 }
 
-print_header
+print_header_clean
 step "Inspect OS/Python/GPU runtimes" 1
 runtime_inventory
 step_tick
@@ -876,6 +1056,16 @@ step_tick
 step "Prewarm TTS model" 1
 run_quiet_or_fail "Prewarm TTS model" "$WEB_PY" -c "from pathlib import Path; from source_full.backend.pipeline_service import AudioPipelineService; s=AudioPipelineService(Path('.')); r=s.prewarm(); import sys; sys.exit(0 if r.get('ok') else 1)"
 
+step "Run production validation" 4
+run_production_validation
+
+if [[ "${SETUP_INSTALL_ONLY:-0}" == "1" ]]; then
+  echo "SETUP_INSTALL_ONLY=1, setup completed without starting web controller." >>"$SETUP_LOG"
+  printf "\n%s Setup install/validation completed without starting web controller.\n" "$(icon ok)"
+  printf "%s Log: %s\n\n" "$(icon info)" "$SETUP_LOG"
+  exit 0
+fi
+
 step "Pick server port" 1
 PORT="$(pick_port || true)"
 if [[ -z "$PORT" ]]; then
@@ -891,8 +1081,4 @@ echo "Full logs: $SETUP_LOG" >>"$SETUP_LOG"
 step_tick
 printf "\n%s URL: %shttp://localhost:%s%s\n" "$(icon rocket)" "$C_BOLD" "$PORT" "$C_RESET"
 printf "%s Log: %s\n\n" "$(icon info)" "$SETUP_LOG"
-if [[ "${SETUP_INSTALL_ONLY:-0}" == "1" ]]; then
-  echo "SETUP_INSTALL_ONLY=1, setup completed without starting web controller." >>"$SETUP_LOG"
-  exit 0
-fi
 PORT="$PORT" "$WEB_PY" source_full/run_web.py

@@ -475,6 +475,7 @@ class OpenWebResponse(BaseModel):
 
 class PingPortsRequest(BaseModel):
 	ports: list[PortNumber] | None = None
+	provider: ChatProvider | None = None
 
 
 class PortStatus(BaseModel):
@@ -1561,6 +1562,8 @@ class GeminiBridgeService:
 					session=session,
 					baseline_count=int(baseline.get('imageCount') or 0),
 					baseline_candidates=list(baseline.get('imageCandidates') or []),
+					baseline_response_count=int(text_baseline.get('responseCount') or 0),
+					baseline_last_text=str(text_baseline.get('lastResponseText') or '').strip(),
 					desired_count=max_images,
 					timeout_s=self._remaining_timeout_or_raise(request_deadline=request_deadline, stage='waiting for generated images'),
 				)
@@ -1912,6 +1915,8 @@ class GeminiBridgeService:
 		session: BrowserSession,
 		baseline_count: int,
 		baseline_candidates: list[dict[str, Any]],
+		baseline_response_count: int,
+		baseline_last_text: str,
 		desired_count: int,
 		timeout_s: float,
 	) -> list[dict[str, Any]]:
@@ -1984,6 +1989,25 @@ class GeminiBridgeService:
 
 		if last_candidates:
 			return last_candidates
+
+		try:
+			text_snapshot = await self._snapshot(session)
+		except AutomationError:
+			text_snapshot = {}
+		response_count = int(text_snapshot.get('responseCount') or 0)
+		last_text = str(text_snapshot.get('lastResponseText') or '').strip()
+		if response_count > baseline_response_count and last_text and last_text != baseline_last_text:
+			raise AutomationError(
+				f'{self.cfg.provider.upper()}_IMAGE_TEXT_RESPONSE',
+				f'{self.cfg.display_name} responded with text instead of generated image assets.',
+				status_code=502,
+				details={
+					'timeout_s': timeout_s,
+					'baseline_response_count': baseline_response_count,
+					'response_count': response_count,
+					'response_preview': last_text[:500],
+				},
+			)
 
 		raise AutomationError(
 			f'{self.cfg.provider.upper()}_IMAGE_TIMEOUT',
@@ -2933,6 +2957,12 @@ async def open_web(payload: OpenWebRequest):
 @app.post('/v1/ports/ping', response_model=PingPortsResponse)
 async def ping_ports(payload: PingPortsRequest):
 	ports = _collect_candidate_ports(payload.ports)
+	requested_ports = _sanitize_ports(payload.ports)
+	if requested_ports:
+		if payload.provider in (None, 'gemini'):
+			GEMINI_SCHEDULER.register_ports(requested_ports)
+		if payload.provider in (None, 'gpt'):
+			GPT_SCHEDULER.register_ports(requested_ports)
 	statuses = await _build_port_statuses(ports)
 	return PingPortsResponse(success=True, ports=statuses)
 

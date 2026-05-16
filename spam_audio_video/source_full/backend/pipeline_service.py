@@ -160,6 +160,7 @@ class AudioPipelineService:
         preprocess_reference: bool = False,
         anti_leak_trim: bool = True,
         anti_leak_max_ms: int = 900,
+        tts_cache_enabled: bool = True,
         progress_callback: Callable[[dict], None] | None = None,
     ) -> PipelineResult:
         if not self.worker_script.exists():
@@ -247,6 +248,8 @@ class AudioPipelineService:
                 "anti_leak_max_ms": max(80, min(1200, int(anti_leak_max_ms))),
                 "head_pre_roll_ms": 10,
                 "tail_keep_ms": 100,
+                "cache_enabled": bool(tts_cache_enabled),
+                "cache_root": str((self.repo_root / "projects_workspace" / "runtime" / "tts_cache").resolve()),
                 "project_id": project_id or "",
                 "session_id": session_id or "",
             }
@@ -497,25 +500,29 @@ class AudioPipelineService:
             old.unlink(missing_ok=True)
 
         def split_sentences(text: str) -> list[str]:
-            compact = " ".join((text or "").split())
+            compact = " ".join((text or "").replace(",", " ").split())
             if not compact:
                 return []
-            return [p.strip(" ,") for p in re.split(r"(?<=[.!?])\s+", compact) if p.strip(" ,")]
+            return [p.strip(" .") for p in re.split(r"(?<=\.)\s+", compact) if p.strip(" .")]
 
         def sanitize_tts_input_text(text: str) -> str:
-            compact = " ".join((text or "").split()).strip()
-            compact = re.sub(r"[.,]+\s*$", "", compact)
-            return compact.strip()
+            compact = " ".join((text or "").replace(",", " ").split()).strip()
+            compact = re.sub(r"\s+\.", ".", compact)
+            compact = re.sub(r"\.+", ".", compact).strip(" .")
+            return f"{compact}." if compact else ""
 
         for chapter_path in chapter_files:
             text = chapter_path.read_text(encoding="utf-8", errors="replace").strip()
             if not text:
                 continue
             for sentence in split_sentences(text):
+                cleaned_sentence = sanitize_tts_input_text(sentence)
+                if not cleaned_sentence:
+                    continue
                 exported += 1
                 out_name = f"text_{exported:04d}.txt"
                 out_path = target_dir / out_name
-                out_path.write_text(sanitize_tts_input_text(sentence), encoding="utf-8")
+                out_path.write_text(cleaned_sentence, encoding="utf-8")
         return exported
 
     @staticmethod

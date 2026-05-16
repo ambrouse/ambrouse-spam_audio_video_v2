@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "v0.1.2",
+  [string]$Version = "v0.1.3",
   [string]$PythonVersion = "3.12.7",
   [string]$NodeVersion = "22.13.1",
   [switch]$SkipRuntimeDownload
@@ -25,6 +25,18 @@ function Download($Url, $Target) {
   Invoke-WebRequest -Uri $Url -OutFile $Target
 }
 
+function Remove-Tree($Path) {
+  if (!(Test-Path -LiteralPath $Path)) {
+    return
+  }
+  $Resolved = (Resolve-Path -LiteralPath $Path).Path
+  if (!$Resolved.StartsWith($RepoRoot.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to remove outside repository: $Resolved"
+  }
+  $LongPath = if ($Resolved.StartsWith("\\?\")) { $Resolved } else { "\\?\$Resolved" }
+  [System.IO.Directory]::Delete($LongPath, $true)
+}
+
 function Copy-Tree($Source, $Target, [string[]]$ExcludeDirs = @(), [string[]]$ExcludeFiles = @()) {
   New-Item -ItemType Directory -Force -Path $Target | Out-Null
   $xd = @()
@@ -39,13 +51,13 @@ function Copy-Tree($Source, $Target, [string[]]$ExcludeDirs = @(), [string[]]$Ex
 
 Step "Preparing folders"
 New-Item -ItemType Directory -Force -Path $DistDir, $CacheDir | Out-Null
-if (Test-Path $BuildRoot) { cmd /c "rmdir /s /q `"$BuildRoot`"" | Out-Null }
+Remove-Tree $BuildRoot
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
 New-Item -ItemType Directory -Force -Path $BuildRoot | Out-Null
 
 Step "Copying source"
 Copy-Tree (Join-Path $RepoRoot "spam_audio_video") (Join-Path $BuildRoot "spam_audio_video") `
-  -ExcludeDirs @(".venv", ".venv-win", ".logs", "projects_workspace", "project_registry", "__pycache__", ".pytest_cache", "auto_text_to_voice\VieNeu-TTS\.venv-win", "auto_text_to_voice\VieNeu-TTS\.venv") `
+  -ExcludeDirs @(".venv", ".venv-win", ".logs", "benchmarks", "projects_workspace", "project_registry", "__pycache__", ".pytest_cache", "auto_text_to_voice\VieNeu-TTS\.venv-win", "auto_text_to_voice\VieNeu-TTS\.venv") `
   -ExcludeFiles @(".env", "*.pyc", "*.pyo", "*.log")
 Copy-Tree (Join-Path $RepoRoot "toll-brouser-gpt-gemini") (Join-Path $BuildRoot "toll-brouser-gpt-gemini") `
   -ExcludeDirs @(".venv", ".git", ".ruff_cache", ".mypy_cache", ".pytest_cache", "generated-images", "temp", "tmp", "__pycache__") `

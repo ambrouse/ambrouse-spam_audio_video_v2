@@ -5,6 +5,9 @@ import json
 import re
 import sys
 import time
+import hashlib
+import os
+import shutil
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
@@ -19,12 +22,17 @@ from run_vieneu_batch_clone import (
 )
 
 
+TTS_CACHE_VERSION = 2
+
+
 class WarmRuntime:
     def __init__(self) -> None:
         self.tts = None
         self.mode_used = ""
         self.runtime_device = ""
         self.model_key = "voxcpm_vn"
+        self._file_hash_cache: dict[str, tuple[int, int, str]] = {}
+        self._prompt_cache: dict[str, Any] = {}
         self.model_catalog: dict[str, dict[str, str]] = {
             "voxcpm_vn": {
                 "label": "VoxCPM 1.5 VN (Clone)",
@@ -60,6 +68,7 @@ class WarmRuntime:
         if callable(close_fn):
             close_fn()
         self.tts = None
+        self._prompt_cache.clear()
 
     def ensure_loaded(self, device: str) -> None:
         runtime_device = device
@@ -103,10 +112,11 @@ class WarmRuntime:
             except Exception:
                 pass
 
+        use_torch_compile = str(os.environ.get("SPAM_TTS_TORCH_COMPILE") or "").strip().lower() in {"1", "true", "yes", "on"}
         self.tts = VoxCPM.from_pretrained(
             hf_model_id=model_cfg["backbone_repo"],
             load_denoiser=False,
-            optimize=(runtime_device == "cuda"),
+            optimize=(runtime_device == "cuda" and use_torch_compile),
         )
         self.mode_used = "voxcpm"
         self.runtime_device = runtime_device
@@ -147,8 +157,89 @@ class WarmRuntime:
                 pass
         return cls._normalize_text_for_tts(decoded)
 
-    def synth(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _sha256_file(self, path: Path) -> str:
+        stat = path.stat()
+        cache_key = str(path.resolve())
+        cached = self._file_hash_cache.get(cache_key)
+        if cached and cached[0] == stat.st_mtime_ns and cached[1] == stat.st_size:
+            return cached[2]
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        value = digest.hexdigest()
+        self._file_hash_cache[cache_key] = (stat.st_mtime_ns, stat.st_size, value)
+        return value
+
+    def _build_tts_cache_key(
+        self,
+        text: str,
+        selected: Any,
+        settings: dict[str, Any],
+    ) -> str:
+        payload = {
+            "version": TTS_CACHE_VERSION,
+            "text": text,
+            "voice_profile": selected.name,
+            "reference_audio_sha256": self._sha256_file(Path(selected.ref_audio)),
+            "reference_text": selected.ref_text,
+            "mode": self.mode_used,
+            "model_key": self.model_key,
+            "device": self.runtime_device,
+            "settings": settings,
+        }
+        encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _get_prompt_cache(self, selected: Any) -> Any:
         assert self.tts is not None
+        ref_audio = Path(selected.ref_audio)
+        cache_payload = {
+            "version": TTS_CACHE_VERSION,
+            "mode": self.mode_used,
+            "model_key": self.model_key,
+            "device": self.runtime_device,
+            "reference_audio": str(ref_audio.resolve()),
+            "reference_audio_sha256": self._sha256_file(ref_audio),
+            "reference_text": selected.ref_text,
+        }
+        encoded = json.dumps(cache_payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        cache_key = hashlib.sha256(encoded).hexdigest()
+        if cache_key not in self._prompt_cache:
+            self._prompt_cache[cache_key] = self.tts.tts_model.build_prompt_cache(
+                prompt_text=selected.ref_text,
+                prompt_wav_path=str(ref_audio),
+            )
+        return self._prompt_cache[cache_key]
+
+    def _generate_with_prompt_cache(
+        self,
+        text: str,
+        selected: Any,
+        inference_timesteps: int,
+        max_len: int,
+    ) -> np.ndarray:
+        assert self.tts is not None
+        from voxcpm.model.utils import next_and_close  # pylint: disable=import-error
+
+        target_text = re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
+        prompt_cache = self._get_prompt_cache(selected)
+        generate_result = self.tts.tts_model._generate_with_prompt_cache(
+            target_text=target_text,
+            prompt_cache=prompt_cache,
+            min_len=2,
+            max_len=max_len,
+            inference_timesteps=inference_timesteps,
+            cfg_value=2.0,
+            retry_badcase=True,
+            retry_badcase_max_times=3,
+            retry_badcase_ratio_threshold=6.0,
+            streaming=False,
+        )
+        wav, _, _ = next_and_close(generate_result)
+        return wav.squeeze(0).cpu().numpy()
+
+    def synth(self, payload: dict[str, Any]) -> dict[str, Any]:
         voice_dir = Path(payload["voice_dir"]).resolve()
         text_dir = Path(payload["text_dir"]).resolve()
         output_dir = Path(payload["output_dir"]).resolve()
@@ -168,6 +259,21 @@ class WarmRuntime:
         anti_leak_max_ms = max(80, min(1200, int(payload.get("anti_leak_max_ms", 900))))
         head_pre_roll_ms = max(0, min(40, int(payload.get("head_pre_roll_ms", 10))))
         tail_keep_ms = max(20, min(250, int(payload.get("tail_keep_ms", 100))))
+        cache_enabled = bool(payload.get("cache_enabled", True))
+        cache_root = Path(
+            payload.get("cache_root")
+            or Path(payload.get("project_root", ".")).resolve().parents[1] / "projects_workspace" / "runtime" / "tts_cache"
+        ).resolve()
+        if not self.mode_used:
+            self.mode_used = "voxcpm"
+        if not self.runtime_device:
+            requested_device = str(payload.get("device", "auto")).strip().lower()
+            if requested_device == "auto":
+                try:
+                    requested_device = "cuda" if torch.cuda.is_available() else "cpu"
+                except Exception:
+                    requested_device = "cpu"
+            self.runtime_device = requested_device
 
         profiles = discover_voice_profiles(voice_dir)
         if not profiles:
@@ -209,6 +315,8 @@ class WarmRuntime:
         )
 
         generated_files: list[Path] = []
+        cache_hits = 0
+        cache_misses = 0
         logs = [
             f"mode={self.mode_used}",
             f"device={self.runtime_device}",
@@ -216,6 +324,7 @@ class WarmRuntime:
             f"text_files={len(text_files)}",
             f"io_workers={io_workers}",
             f"inference_timesteps={inference_timesteps}",
+            f"cache_enabled={cache_enabled}",
         ]
 
         infer_texts: list[str] = []
@@ -234,10 +343,37 @@ class WarmRuntime:
         failed_files: list[str] = []
         if self.mode_used != "voxcpm":
             raise RuntimeError(f"Unsupported mode for synth: {self.mode_used}")
-        sample_rate = int(getattr(getattr(self.tts, "tts_model", None), "sample_rate", 44100))
+        sample_rate: int | None = None
         pause_sequence_ms_by_index: dict[int, int] = {}
         trim_applied = 0
         generated_by_index: dict[int, Path] = {}
+        cache_items: list[dict[str, Any]] = []
+
+        key_settings = {
+            "inference_timesteps": inference_timesteps,
+            "temperature": max(0.01, min(1.2, temperature)),
+            "top_k": max(1, min(100, top_k)),
+            "max_chars": max_chars,
+            "postprocess": {
+                "enabled": cfg.enable,
+                "noise_reduction": cfg.noise_reduction,
+                "highpass_hz": cfg.highpass_hz,
+                "lowpass_hz": cfg.lowpass_hz,
+                "target_peak_db": cfg.target_peak_db,
+                "comp_threshold_db": cfg.comp_threshold_db,
+                "comp_ratio": cfg.comp_ratio,
+                "make_up_gain_db": cfg.make_up_gain_db,
+                "presence_boost_db": cfg.presence_boost_db,
+                "de_ess": cfg.de_ess,
+                "gate_strength": cfg.gate_strength,
+            },
+            "anti_leak_trim": anti_leak_trim,
+            "anti_leak_max_ms": anti_leak_max_ms,
+            "head_pre_roll_ms": head_pre_roll_ms,
+            "tail_keep_ms": tail_keep_ms,
+            "denoise": False,
+            "normalize": False,
+        }
 
         def _write_and_postprocess(
             out_path: Path,
@@ -257,15 +393,43 @@ class WarmRuntime:
             for idx, (txt_file, text) in enumerate(zip(valid_files, infer_texts), start=1):
                 try:
                     dynamic_max_len = max(200, min(2200, int(len(text) * 3.2) + 80))
+                    cache_key = self._build_tts_cache_key(
+                        text,
+                        selected,
+                        {**key_settings, "dynamic_max_len": dynamic_max_len},
+                    )
+                    cache_path = cache_root / f"v{TTS_CACHE_VERSION}" / f"{cache_key}.wav"
+                    out_path = output_dir / f"{txt_file.stem}.wav"
+                    pause_ms = _suggest_pause_ms_from_text(text)
+                    pause_sequence_ms_by_index[idx] = pause_ms
+                    if cache_enabled and cache_path.exists():
+                        shutil.copy2(cache_path, out_path)
+                        generated_by_index[idx] = out_path
+                        cache_hits += 1
+                        cache_items.append({
+                            "input": str(txt_file),
+                            "output": str(out_path),
+                            "cache_key": cache_key,
+                            "cache_path": str(cache_path),
+                            "cache_hit": True,
+                        })
+                        logs.append(
+                            f"[{idx}/{len(valid_files)}] cache hit {out_path.name} "
+                            f"(chars={len(text)}, key={cache_key[:12]})"
+                        )
+                        continue
+                    cache_misses += 1
+                    if self.tts is None:
+                        self.ensure_loaded(payload.get("device", "auto"))
+                    assert self.tts is not None
+                    if sample_rate is None:
+                        sample_rate = int(getattr(getattr(self.tts, "tts_model", None), "sample_rate", 44100))
                     t0 = time.perf_counter()
-                    wav = self.tts.generate(
+                    wav = self._generate_with_prompt_cache(
                         text=text,
-                        prompt_wav_path=str(selected.ref_audio),
-                        prompt_text=selected.ref_text,
+                        selected=selected,
                         inference_timesteps=inference_timesteps,
                         max_len=dynamic_max_len,
-                        denoise=False,
-                        normalize=False,
                     )
                     infer_ms = int((time.perf_counter() - t0) * 1000)
                     wav_arr = np.asarray(wav, dtype=np.float32)
@@ -278,18 +442,25 @@ class WarmRuntime:
                         tail_keep_ms=tail_keep_ms,
                     )
                     trim_applied += 1 if trimmed_ms > 0 else 0
-                    out_path = output_dir / f"{txt_file.stem}.wav"
-                    pause_ms = _suggest_pause_ms_from_text(text)
                     future = io_pool.submit(_write_and_postprocess, out_path, wav_arr, sample_rate, cfg)
-                    pending[future] = (idx, out_path, len(text), dynamic_max_len, infer_ms)
-                    pause_sequence_ms_by_index[idx] = pause_ms
+                    pending[future] = (idx, out_path, len(text), dynamic_max_len, infer_ms, cache_key, cache_path)
                     if len(pending) >= max_pending:
                         done, _not_done = wait(set(pending.keys()), return_when=FIRST_COMPLETED)
                         for fut in done:
-                            file_idx, saved_path, text_chars, max_len_used, infer_ms_used = pending.pop(fut)
+                            file_idx, saved_path, text_chars, max_len_used, infer_ms_used, saved_cache_key, saved_cache_path = pending.pop(fut)
                             try:
                                 io_ms = fut.result()
+                                if cache_enabled:
+                                    saved_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                                    shutil.copy2(saved_path, saved_cache_path)
                                 generated_by_index[file_idx] = saved_path
+                                cache_items.append({
+                                    "input": str(valid_files[file_idx - 1]),
+                                    "output": str(saved_path),
+                                    "cache_key": saved_cache_key,
+                                    "cache_path": str(saved_cache_path),
+                                    "cache_hit": False,
+                                })
                                 logs.append(
                                     f"[{file_idx}/{len(valid_files)}] saved {saved_path.name} "
                                     f"(chars={text_chars}, max_len={max_len_used}, infer_ms={infer_ms_used}, io_ms={io_ms})"
@@ -303,10 +474,20 @@ class WarmRuntime:
             if pending:
                 done, _not_done = wait(set(pending.keys()))
                 for fut in done:
-                    file_idx, saved_path, text_chars, max_len_used, infer_ms_used = pending.pop(fut)
+                    file_idx, saved_path, text_chars, max_len_used, infer_ms_used, saved_cache_key, saved_cache_path = pending.pop(fut)
                     try:
                         io_ms = fut.result()
+                        if cache_enabled:
+                            saved_cache_path.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(saved_path, saved_cache_path)
                         generated_by_index[file_idx] = saved_path
+                        cache_items.append({
+                            "input": str(valid_files[file_idx - 1]),
+                            "output": str(saved_path),
+                            "cache_key": saved_cache_key,
+                            "cache_path": str(saved_cache_path),
+                            "cache_hit": False,
+                        })
                         logs.append(
                             f"[{file_idx}/{len(valid_files)}] saved {saved_path.name} "
                             f"(chars={text_chars}, max_len={max_len_used}, infer_ms={infer_ms_used}, io_ms={io_ms})"
@@ -358,6 +539,13 @@ class WarmRuntime:
             "inputs": [str(p) for p in text_files],
             "outputs": [str(p) for p in generated_files],
             "combined_output": str(merged_file),
+            "cache": {
+                "enabled": cache_enabled,
+                "root": str(cache_root),
+                "hits": cache_hits,
+                "misses": cache_misses,
+                "items": sorted(cache_items, key=lambda item: item.get("input", "")),
+            },
         }
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -530,7 +718,6 @@ def main() -> int:
             if cmd == "synth":
                 if req.get("model_key"):
                     runtime.set_model(str(req["model_key"]))
-                runtime.ensure_loaded(req.get("device", "auto"))
                 result = runtime.synth(req)
                 _reply({"ok": True, **result})
                 continue

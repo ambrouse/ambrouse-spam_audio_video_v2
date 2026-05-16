@@ -76,7 +76,7 @@ class PipelineRunRequest(BaseModel):
     temperature: float = 0.05
     top_k: int = 80
     max_chars: int = 420
-    tts_io_workers: int = 2
+    tts_io_workers: int = 6
     inference_timesteps: int = 8
     postprocess: bool = False
     noise_reduction: float = 0.12
@@ -193,7 +193,7 @@ class ConvertRewriteRequest(BaseModel):
 
 class ConvertChunkRequest(BaseModel):
     job_id: str | None = None
-    min_words: int = 16
+    min_words: int = 30
     max_words: int = 64
     session_id: str | None = None
 
@@ -251,13 +251,15 @@ class RunAllRequest(ConvertFullRunRequest):
     temperature: float = 0.05
     top_k: int = 80
     max_chars_tts: int = 420
-    tts_io_workers: int = 2
+    tts_io_workers: int = 6
     inference_timesteps: int = 8
     resume_from_checkpoint: bool = False
     video_enabled: bool = True
-    video_scene_duration_seconds: float = 60.0
+    video_scene_duration_seconds: float = 30.0
     video_provider: str = "bridge_gemini"
     video_image_provider: str = "bridge_gpt"
+    video_gemini_cdp_url: str | None = None
+    video_gemini_cdp_urls: list[str] | None = None
     video_gpt_cdp_url: str | None = None
     video_gpt_cdp_urls: list[str] | None = None
     video_prompt_workers: int = 9
@@ -284,11 +286,15 @@ class VideoPipelineRequest(BaseModel):
     job_id: str | None = None
     project_id: str
     session_id: str
-    scene_duration_seconds: float = 60.0
+    scene_duration_seconds: float = 30.0
     provider: str = "bridge_gemini"
     image_provider: str = "bridge_gpt"
     cdp_url: str | None = None
     cdp_urls: list[str] | None = None
+    gemini_cdp_url: str | None = None
+    gemini_cdp_urls: list[str] | None = None
+    gpt_cdp_url: str | None = None
+    gpt_cdp_urls: list[str] | None = None
     prompt_parallel_workers: int = 1
     prompt_delay_seconds: float = 0.6
     width: int = 1280
@@ -1152,8 +1158,12 @@ def run_all_pipeline(payload: RunAllRequest) -> dict:
                 "scene_duration_seconds": payload.video_scene_duration_seconds,
                 "provider": payload.video_provider,
                 "image_provider": payload.video_image_provider,
-                "cdp_url": payload.video_gpt_cdp_url,
-                "cdp_urls": payload.video_gpt_cdp_urls,
+                "gemini_cdp_url": payload.video_gemini_cdp_url or payload.cdp_url,
+                "gemini_cdp_urls": payload.video_gemini_cdp_urls or payload.cdp_urls,
+                "gpt_cdp_url": payload.video_gpt_cdp_url,
+                "gpt_cdp_urls": payload.video_gpt_cdp_urls,
+                "cdp_url": payload.video_gemini_cdp_url or payload.cdp_url,
+                "cdp_urls": payload.video_gemini_cdp_urls or payload.cdp_urls,
                 "prompt_parallel_workers": payload.video_prompt_workers,
                 "prompt_delay_seconds": payload.video_prompt_delay_seconds,
                 "width": payload.video_width,

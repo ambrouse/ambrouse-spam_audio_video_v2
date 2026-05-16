@@ -206,11 +206,11 @@
             </div>
             <div>
               <label for="ttsIoWorkersInput">TTS IO workers (save/postprocess)</label>
-              <input id="ttsIoWorkersInput" type="number" min="1" max="6" step="1" value="2" />
+              <input id="ttsIoWorkersInput" type="number" min="1" max="6" step="1" value="6" />
             </div>
             <div>
               <label for="rewriteWorkersInput">Rewrite workers</label>
-              <input id="rewriteWorkersInput" type="number" min="1" max="9" value="2" />
+              <input id="rewriteWorkersInput" type="number" min="1" max="9" value="9" />
             </div>
             <div>
               <label for="videoImageCountInput">Images per session</label>
@@ -247,7 +247,7 @@
               </div>
               <div>
                 <label for="chunkMinWordsInput">Min words</label>
-                <input id="chunkMinWordsInput" type="number" min="1" value="16" />
+                <input id="chunkMinWordsInput" type="number" min="30" value="30" />
               </div>
               <div>
                 <label for="chunkMaxWordsInput">Max words</label>
@@ -307,6 +307,10 @@
                 <div>
                   <label for="bridgePortsInput">Ports</label>
                   <input id="bridgePortsInput" type="text" value="9222,9223,9224" />
+                </div>
+                <div>
+                  <label for="geminiPortsInput">Gemini ports</label>
+                  <input id="geminiPortsInput" type="text" value="9222,9223,9224" />
                 </div>
               </div>
               <div class="button-row">
@@ -408,7 +412,7 @@
               <div class="form-grid compact-grid">
                 <div>
                   <label for="videoSceneDurationInput">Seconds per image</label>
-                  <input id="videoSceneDurationInput" type="number" min="5" max="300" step="1" value="60" />
+                  <input id="videoSceneDurationInput" type="number" min="5" max="300" step="1" value="30" />
                 </div>
                 <div>
                   <label for="videoWidthInput">Width</label>

@@ -1,6 +1,0 @@
-interface:
-  display_name: "Project Workflow"
-  short_description: "Repo rules for Codex project work"
-  default_prompt: "Use $project-workflow to apply this repository's preserved project rules."
-policy:
-  allow_implicit_invocation: true

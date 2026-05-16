@@ -18,7 +18,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from auto_convert_text.pipeline.collector import Collector
 from auto_convert_text.pipeline.audio_cleaner import AudioCleaner
-from auto_convert_text.pipeline.browser_bridge_client import DEFAULT_BRIDGE_BASE_URL
+from auto_convert_text.pipeline.browser_bridge_client import DEFAULT_BRIDGE_BASE_URL, BrowserBridgeClient
 from auto_convert_text.pipeline.gemini_rewriter import DEFAULT_REWRITE_PROMPT, GeminiRewriter, RewriteConfig
 from auto_convert_text.pipeline.simple_chunker import SimpleChunker
 from auto_convert_text.models.dto import ConvertProject
@@ -26,7 +26,7 @@ from auto_convert_text.storage.shared_project_registry import SharedProjectRegis
 from auto_convert_text.storage.project_store import ProjectStore
 from auto_convert_text.storage.project_store import slugify
 
-DEFAULT_TTS_MIN_WORDS = 16
+DEFAULT_TTS_MIN_WORDS = 30
 DEFAULT_TTS_MAX_WORDS = 64
 DEFAULT_LLM_BASE_URL = ""
 DEFAULT_LLM_MODEL = "gemini/gemini-3-flash-preview"
@@ -919,6 +919,11 @@ class ConvertPipelineService:
             parallel_workers=max(1, int(parallel_workers or 2)),
             request_delay_seconds=0.6,
         )
+        rewrite_warmup = {}
+        if str(provider or "").strip().lower() in {"", "bridge_gemini", "gemini_web"}:
+            rewrite_ports = self._ports_from_cdp_values(cdp_url, cdp_urls or [])
+            if rewrite_ports:
+                rewrite_warmup = BrowserBridgeClient(bridge_base_url, timeout_s=bridge_timeout_s).ping_ports(rewrite_ports)
         result = self.rewriter.run(
             project_id,
             config,
@@ -928,6 +933,8 @@ class ConvertPipelineService:
             resume_only=resume_only,
         )
         result["prompt_source"] = prompt_source
+        if rewrite_warmup:
+            result["bridge_warmup"] = rewrite_warmup
         session_dir = self.store.session_dir(project_id, session_id)
         self.registry.update_convert(
             project_id,
@@ -957,6 +964,23 @@ class ConvertPipelineService:
                 return response.status == 200
         except Exception:
             return False
+
+    @staticmethod
+    def _ports_from_cdp_values(cdp_url: str | None, cdp_urls: list[str] | None) -> list[int]:
+        values: set[int] = set()
+        urls: list[str] = []
+        if cdp_url:
+            urls.append(str(cdp_url))
+        urls.extend(str(item) for item in (cdp_urls or []) if str(item or "").strip())
+        for raw in urls:
+            try:
+                parsed = urlparse(raw if "://" in raw else f"http://127.0.0.1:{raw}")
+                port = int(parsed.port or 0)
+            except Exception:
+                port = 0
+            if 1 <= port <= 65535:
+                values.add(port)
+        return sorted(values)
 
     def open_gemini_chrome_pool(
         self,

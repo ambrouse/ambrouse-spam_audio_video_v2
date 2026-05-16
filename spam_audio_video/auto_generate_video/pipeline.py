@@ -40,7 +40,7 @@ DEFAULT_VIDEO_GEMINI_PROMPT_TEMPLATE = (
 
 @dataclass
 class VideoPipelineConfig:
-    scene_duration_seconds: float = 60.0
+    scene_duration_seconds: float = 30.0
     width: int = 1280
     height: int = 720
     fps: int = 24
@@ -49,6 +49,10 @@ class VideoPipelineConfig:
     image_provider: str = "bridge_gpt"
     cdp_url: str | None = None
     cdp_urls: list[str] | None = None
+    gemini_cdp_url: str | None = None
+    gemini_cdp_urls: list[str] | None = None
+    gpt_cdp_url: str | None = None
+    gpt_cdp_urls: list[str] | None = None
     prompt_parallel_workers: int = 1
     prompt_delay_seconds: float = 0.6
     sd_model_path: str | None = None
@@ -67,7 +71,7 @@ class VideoPipelineConfig:
     story_context: str = ""
     gemini_prompt_template: str = DEFAULT_VIDEO_GEMINI_PROMPT_TEMPLATE
     video_encoder: str = os.getenv("VIDEO_ENCODER", "auto")
-    video_preset: str = "quality"
+    video_preset: str = os.getenv("VIDEO_PRESET", "quality")
     video_crf: int = 18
     video_cq: int = 18
     render_workers: int = int(os.getenv("VIDEO_RENDER_WORKERS", "6") or 6)
@@ -119,7 +123,7 @@ class VideoPipeline:
         self,
         project_id: str,
         session_id: str,
-        scene_duration_seconds: float = 60.0,
+        scene_duration_seconds: float = 30.0,
         image_count_limit: int | None = None,
         prompt_tts_input_limit: int | None = None,
     ) -> dict:
@@ -132,7 +136,7 @@ class VideoPipeline:
         total_audio_seconds = self._resolve_session_audio_duration_seconds(dirs["session_dir"])
         max_images = max(1, min(120, int(image_count_limit or 10)))
         scene_count = min(max_images, max(1, len(tts_files)))
-        safe_scene_duration = max(5.0, float(scene_duration_seconds or 60.0))
+        safe_scene_duration = max(5.0, float(scene_duration_seconds or 30.0))
         if total_audio_seconds <= 0:
             total_audio_seconds = scene_count * safe_scene_duration
 
@@ -189,7 +193,8 @@ class VideoPipeline:
         strict_gemini_prompt = bool(config.gemini_prompt_strict) or strict_env
 
         bridge_client = BrowserBridgeClient(config.bridge_base_url, timeout_s=config.bridge_timeout_s)
-        bridge_ports = self._bridge_ports_from_config(config)
+        bridge_ports = self._gemini_bridge_ports_from_config(config)
+        bridge_warmup = self._warm_bridge_ports(bridge_client, bridge_ports) if provider_name == "bridge_gemini" else {}
 
         def _process_group(index: int, group: dict) -> dict:
             grouped_text = self._read_group_texts(
@@ -300,6 +305,8 @@ class VideoPipeline:
             "session_id": session_id,
             "provider": provider_name,
             "bridge_base_url": bridge_client.base_url if provider_name == "bridge_gemini" else "",
+            "bridge_ports": bridge_ports,
+            "bridge_warmup": bridge_warmup,
             "story_context": story_context,
             "gemini_prompt_template": gemini_prompt_template,
             "scene_count": len(prompt_items),
@@ -437,7 +444,8 @@ class VideoPipeline:
                 "preview_text": f"{total} prompts",
             })
 
-        bridge_ports = self._bridge_ports_from_config(config)
+        bridge_ports = self._gpt_bridge_ports_from_config(config)
+        bridge_warmup = self._warm_bridge_ports(client, bridge_ports)
         batch_size = max(1, min(24, int(os.getenv("VIDEO_BRIDGE_BATCH_SIZE", "24") or 24)))
         for batch_start in range(0, len(prompt_rows), batch_size):
             if should_stop and should_stop():
@@ -487,6 +495,8 @@ class VideoPipeline:
             "session_id": session_id,
             "engine": "bridge_gpt",
             "bridge_base_url": client.base_url,
+            "bridge_ports": bridge_ports,
+            "bridge_warmup": bridge_warmup,
             "scene_count": len(items),
             "max_images": max(1, min(120, int(config.gpt_image_limit or 10))),
             "batch_size": batch_size,
@@ -496,6 +506,104 @@ class VideoPipeline:
         target = dirs["manifests_dir"] / "images_manifest.json"
         target.write_text(json.dumps(image_manifest, ensure_ascii=False, indent=2), encoding="utf-8")
         return image_manifest
+
+    def build_native_renderer_input(
+        self,
+        project_id: str,
+        session_id: str,
+        config: VideoPipelineConfig,
+        output_path: Path,
+    ) -> dict:
+        dirs = self.ensure_session_video_dirs(project_id, session_id)
+        analysis_path = dirs["manifests_dir"] / "analysis_manifest.json"
+        if analysis_path.exists():
+            analysis = json.loads(analysis_path.read_text(encoding="utf-8"))
+        else:
+            analysis = self.analyze_session(project_id, session_id, config.scene_duration_seconds)
+
+        source_image_files = self._collect_scene_images(dirs["images_dir"])
+        if not source_image_files:
+            raise FileNotFoundError("No scene images found. Run image generation first.")
+
+        raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 30.0)
+        per_scene_duration = raw_scene_duration if 5.0 <= raw_scene_duration <= 300.0 else 30.0
+        audio_seconds = float(analysis.get("total_audio_seconds") or 0.0)
+        transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
+        image_files = self._build_render_image_sequence(
+            source_image_files,
+            audio_seconds=audio_seconds,
+            per_scene_duration=per_scene_duration,
+            transition_seconds=transition_seconds,
+            project_id=project_id,
+            session_id=session_id,
+        )
+        width = max(512, int(config.width))
+        height = max(512, int(config.height))
+        fps = 60
+        motion = max(0.04, min(0.24, float(config.motion_intensity)))
+        side_pad = max(60, int(width * 0.060))
+        panel_width = max(320, width - side_pad * 2)
+        logo_path = self._resolve_logo_path()
+        palette = self._sample_image_palette(image_files[0])
+        dust_color, dust_alpha, spark_color = self._choose_vfx_palette(palette)
+        particle_seed = int(hashlib.sha256(f"{project_id}|{session_id}|{image_files[0].name}".encode("utf-8")).hexdigest()[:8], 16)
+
+        audio_path = ""
+        try:
+            audio_candidate = self._resolve_audio_for_merge(dirs)
+            audio_path = str(audio_candidate)
+        except FileNotFoundError:
+            audio_path = ""
+
+        return {
+            "schema_version": 1,
+            "renderer": "native_gpu",
+            "project_id": project_id,
+            "session_id": session_id,
+            "output_path": str(output_path),
+            "session_dir": str(dirs["session_dir"]),
+            "audio_path": audio_path,
+            "runtime": {
+                "ffmpeg_bin": str(self.ffmpeg_bin),
+            },
+            "video": {
+                "width": width,
+                "height": height,
+                "fps": fps,
+                "duration_seconds": round(max(audio_seconds, len(image_files) * per_scene_duration), 3),
+                "scene_count": len(image_files),
+                "per_scene_duration_seconds": per_scene_duration,
+                "transition_seconds": transition_seconds,
+                "encoder": str(config.video_encoder or "auto"),
+                "preset": str(config.video_preset or "quality"),
+                "cq": int(config.video_cq or 18),
+                "crf": int(config.video_crf or 18),
+            },
+            "layout": {
+                "side_pad": side_pad,
+                "panel_width": panel_width,
+                "panel_height": height,
+                "motion_intensity": motion,
+                "scroll_zoom": min(1.55, 1.34 + motion * 1.60),
+                "vertical_travel": min(0.86, (0.18 + motion * 0.62) * 3.48),
+            },
+            "assets": {
+                "images": [str(path) for path in image_files],
+                "source_images": [str(path) for path in source_image_files],
+                "logo_path": str(logo_path) if logo_path else "",
+            },
+            "visual_overlay": {
+                "enabled": True,
+                "particle_seed": particle_seed,
+                "dust_color": dust_color,
+                "spark_color": spark_color,
+                "dust_alpha": round(dust_alpha, 3),
+                "sampled_rgb": palette.get("sampled_rgb"),
+                "dominant_rgb": palette.get("dominant_rgb"),
+                "accent_rgb": palette.get("accent_rgb"),
+                "audio_visualizer_enabled": bool(audio_path),
+            },
+        }
 
     @staticmethod
     def _sanitize_policy_safe_prompt(prompt: str) -> str:
@@ -553,10 +661,14 @@ class VideoPipeline:
         if not self._check_ffmpeg():
             raise RuntimeError("ffmpeg is required for video render.")
 
+        render_started_at = time.perf_counter()
+        render_timings: dict[str, float | list[dict]] = {}
         clips_dir = dirs["renders_dir"] / "clips"
         clips_dir.mkdir(parents=True, exist_ok=True)
-        raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 60.0)
-        per_scene_duration = raw_scene_duration if 45.0 <= raw_scene_duration <= 90.0 else 60.0
+        layer_cache_dir = dirs["renders_dir"] / "layer_cache"
+        layer_cache_dir.mkdir(parents=True, exist_ok=True)
+        raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 30.0)
+        per_scene_duration = raw_scene_duration if 5.0 <= raw_scene_duration <= 300.0 else 30.0
         audio_seconds = float(analysis.get("total_audio_seconds") or 0.0)
         transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
         image_files = self._build_render_image_sequence(
@@ -600,6 +712,85 @@ class VideoPipeline:
         vertical_travel = min(0.86, (0.18 + motion * 0.62) * speed_factor)
         center_x = 0.50
 
+        fused_visual_overlay: dict | None = None
+        fuse_single_scene_overlay = (
+            len(image_files) == 1
+            and not render_with_audio
+            and str(os.getenv("SPAM_VIDEO_FUSE_SINGLE_SCENE_OVERLAY", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        )
+        use_native_gpu_clip = str(os.getenv("SPAM_VIDEO_NATIVE_GPU_RENDER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        native_renderer_bin: Path | None = None
+        native_final_visual = False
+        native_visual_overlay: dict | None = None
+        native_visual_audio_path: Path | None = None
+        if use_native_gpu_clip:
+            if len(image_files) != 1:
+                raise RuntimeError("Native GPU clip renderer currently requires exactly one render image.")
+            if width != 3840 or height != 2160 or fps != 60:
+                raise RuntimeError("Native GPU clip renderer is locked to the production 4K60 output contract.")
+            native_renderer_bin = self._resolve_native_story_renderer_bin()
+            native_final_visual = True
+            native_audio_override = str(os.getenv("SPAM_VIDEO_NATIVE_AUDIO_PATH") or "").strip()
+            if native_audio_override:
+                candidate_audio = Path(native_audio_override)
+                if candidate_audio.exists() and candidate_audio.is_file():
+                    native_visual_audio_path = candidate_audio
+            elif render_with_audio:
+                try:
+                    native_visual_audio_path = self._resolve_audio_for_merge(dirs)
+                except FileNotFoundError:
+                    native_visual_audio_path = None
+
+            logo_path = self._resolve_logo_path()
+            palette = self._sample_image_palette(image_files[0])
+            dust_color, dust_alpha, spark_color = self._choose_vfx_palette(palette)
+            seed_input = f"{project_id}|{session_id}|{image_files[0].name}"
+            particle_seed = int(hashlib.sha256(seed_input.encode("utf-8")).hexdigest()[:8], 16)
+            native_visual_overlay = {
+                "enabled": True,
+                "logo_path": logo_path,
+                "particle_seed": particle_seed,
+                "dust_particle_count": max(48, min(86, int(width / 20))),
+                "spark_particle_count": max(14, min(32, int(width / 54))),
+                "dust_color": dust_color,
+                "spark_color": spark_color,
+                "dust_alpha": round(dust_alpha, 3),
+                "audio_visualizer_enabled": bool(native_visual_audio_path),
+                "audio_visualizer_color": palette.get("accent_hex") or spark_color,
+                "sampled_rgb": palette.get("average_rgb", []),
+                "dominant_rgb": palette.get("dominant_rgb", []),
+                "accent_rgb": palette.get("accent_rgb", []),
+            }
+        if fuse_single_scene_overlay:
+            logo_path = self._resolve_logo_path()
+            palette = self._sample_image_palette(image_files[0])
+            dust_color, dust_alpha, spark_color = self._choose_vfx_palette(palette)
+            seed_input = f"{project_id}|{session_id}|{image_files[0].name}"
+            particle_seed = int(hashlib.sha256(seed_input.encode("utf-8")).hexdigest()[:8], 16)
+            vfx_filter, dust_count, spark_count = self._build_particle_vfx_filter(
+                width,
+                height,
+                particle_seed,
+                dust_color,
+                dust_alpha,
+                spark_color,
+            )
+            fused_visual_overlay = {
+                "enabled": True,
+                "logo_path": logo_path,
+                "vfx_filter": vfx_filter,
+                "dust_particle_count": dust_count,
+                "spark_particle_count": spark_count,
+                "dust_color": dust_color,
+                "spark_color": spark_color,
+                "dust_alpha": round(dust_alpha, 3),
+                "audio_visualizer_enabled": False,
+                "audio_visualizer_color": palette.get("accent_hex") or spark_color,
+                "sampled_rgb": palette.get("average_rgb", []),
+                "dominant_rgb": palette.get("dominant_rgb", []),
+                "accent_rgb": palette.get("accent_rgb", []),
+            }
+
         clip_plan: list[dict] = []
         for index, image_path in enumerate(image_files, start=1):
             if should_stop and should_stop():
@@ -624,17 +815,41 @@ class VideoPipeline:
             panel_cam_width = panel_width * supersample
             panel_cam_height = panel_height * supersample
 
-            filter_complex = (
+            fg_static_width = int(panel_cam_width * overscan * z0)
+            fg_static_height = int(panel_cam_height * overscan * z0)
+            background_filter = (
                 f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
                 f"crop={width}:{height},boxblur=lr=18:lp=2:cr=0:cp=0,"
-                f"eq=saturation=0.88:brightness=-0.025[bg];"
+                f"eq=saturation=0.88:brightness=-0.025,format=rgba[bg]"
+            )
+            foreground_filter = (
                 # For small source images, upscale and recover edge contrast before camera moves.
                 f"[0:v]scale='if(lt(iw,{int(width * 0.9)}),min(iw*2,{int(width * 1.45)}),iw)':"
                 f"'if(lt(ih,{int(height * 0.9)}),min(ih*2,{int(height * 1.45)}),ih)':"
                 f"flags=lanczos+accurate_rnd+full_chroma_int,"
                 f"hqdn3d=0.9:0.9:4.5:4.5,"
                 f"unsharp=5:5:0.38:5:5:0.0,"
-                f"scale={int(panel_cam_width * overscan * z0)}:{int(panel_cam_height * overscan * z0)}:force_original_aspect_ratio=increase,"
+                f"scale={fg_static_width}:{fg_static_height}:force_original_aspect_ratio=increase,"
+                f"format=rgba[fg_static]"
+            )
+            filter_complex = (
+                f"[1:v]crop={panel_cam_width}:{panel_cam_height}:"
+                f"x='(in_w-out_w)*{start_x:.4f}':"
+                f"y='(in_h-out_h)*{scroll_y_expr}',"
+                f"scale={panel_width}:{panel_height}:flags=lanczos+accurate_rnd+full_chroma_int[fg];"
+                f"[0:v][fg]overlay=x={side_pad}:y=0,"
+                f"fps={fps},format=yuv420p[vout]"
+            )
+            legacy_filter_complex = (
+                f"[0:v]scale={width}:{height}:force_original_aspect_ratio=increase,"
+                f"crop={width}:{height},boxblur=lr=18:lp=2:cr=0:cp=0,"
+                f"eq=saturation=0.88:brightness=-0.025[bg];"
+                f"[0:v]scale='if(lt(iw,{int(width * 0.9)}),min(iw*2,{int(width * 1.45)}),iw)':"
+                f"'if(lt(ih,{int(height * 0.9)}),min(ih*2,{int(height * 1.45)}),ih)':"
+                f"flags=lanczos+accurate_rnd+full_chroma_int,"
+                f"hqdn3d=0.9:0.9:4.5:4.5,"
+                f"unsharp=5:5:0.38:5:5:0.0,"
+                f"scale={fg_static_width}:{fg_static_height}:force_original_aspect_ratio=increase,"
                 f"crop={panel_cam_width}:{panel_cam_height}:"
                 f"x='(in_w-out_w)*{start_x:.4f}':"
                 f"y='(in_h-out_h)*{scroll_y_expr}',"
@@ -642,50 +857,173 @@ class VideoPipeline:
                 f"[bg][fg]overlay=x={side_pad}:y=0,"
                 f"fps={fps},format=yuv420p[vout]"
             )
+            fused_filter_complex = ""
+            if fused_visual_overlay:
+                logo_path = fused_visual_overlay.get("logo_path")
+                logo_input_index = 2 if logo_path else None
+                fused_parts = [
+                    legacy_filter_complex.rsplit(",format=yuv420p[vout]", 1)[0] + ",format=rgba[base]",
+                    f"[1:v]format=rgba,colorchannelmixer=aa=0,{fused_visual_overlay['vfx_filter']}[vfx]",
+                    "[base][vfx]overlay=shortest=1:format=auto[vfxed]",
+                ]
+                current_label = "vfxed"
+                if logo_path:
+                    logo_width = max(28, min(int(side_pad * 0.68), int(width * 0.034)))
+                    bottom_margin = max(8, int(height * 0.014))
+                    fused_parts.extend([
+                        f"[{logo_input_index}:v]scale=w='if(gt(iw,{logo_width}),{logo_width},iw)':h=-1:flags=lanczos,format=rgba,colorchannelmixer=aa=0.82[logo]",
+                        f"[{current_label}][logo]overlay=x=main_w-{side_pad}+({side_pad}-overlay_w)/2:y=main_h-overlay_h-{bottom_margin}:format=auto,format=yuv420p[vout]",
+                    ])
+                else:
+                    fused_parts.append(f"[{current_label}]format=yuv420p[vout]")
+                fused_filter_complex = ";".join(fused_parts)
+            layer_key = self._build_static_layer_key(
+                image_path,
+                width,
+                height,
+                fg_static_width,
+                fg_static_height,
+                background_filter,
+                foreground_filter,
+            )
+            bg_layer = layer_cache_dir / f"scene_{index:04d}_{layer_key[:16]}_bg.png"
+            fg_layer = layer_cache_dir / f"scene_{index:04d}_{layer_key[:16]}_fg.png"
 
             clip_plan.append({
                 "index": index,
                 "image_path": image_path,
                 "clip_path": clip_path,
                 "filter_complex": filter_complex,
+                "legacy_filter_complex": legacy_filter_complex,
+                "background_filter": background_filter,
+                "foreground_filter": foreground_filter,
+                "bg_layer": bg_layer,
+                "fg_layer": fg_layer,
+                "fused_filter_complex": fused_filter_complex,
+                "fused_logo_path": fused_visual_overlay.get("logo_path") if fused_visual_overlay else None,
+                "native_renderer": use_native_gpu_clip,
+                "native_renderer_bin": str(native_renderer_bin) if native_renderer_bin else "",
+                "native_scroll_zoom": overscan * z0,
+                "native_report_path": str(clips_dir / f"clip_{index:04d}.native_report.json"),
+                "native_input_path": str(clips_dir / f"clip_{index:04d}.native_input.json"),
+                "native_final_visual": native_final_visual,
+                "native_visual_overlay": native_visual_overlay,
+                "native_visual_audio_path": str(native_visual_audio_path) if native_visual_audio_path else "",
             })
 
         clip_paths: list[Path] = []
         done_count = 0
         done_lock = threading.Lock()
 
-        def _render_one_clip(plan: dict) -> tuple[int, Path, str]:
+        def _render_one_clip(plan: dict) -> tuple[int, Path, str, float]:
+            clip_started_at = time.perf_counter()
             if should_stop and should_stop():
                 raise RuntimeError("STOP_REQUESTED")
             idx = int(plan["index"])
             src_path = Path(plan["image_path"])
             out_path = Path(plan["clip_path"])
-            cmd = [
-                self.ffmpeg_bin,
-                "-y",
-                "-loop",
-                "1",
-                "-i",
-                str(src_path),
-                "-filter_complex",
-                str(plan["filter_complex"]),
-                "-map",
-                "[vout]",
-                "-t",
-                str(per_scene_duration),
-                "-an",
-                *self._build_video_encode_args(selected_encoder, gop, fps, config),
-                "-movflags",
-                "+faststart",
-                str(out_path),
-            ]
+            if bool(plan.get("native_renderer")):
+                self._render_native_gpu_clip(
+                    renderer_bin=Path(str(plan["native_renderer_bin"])),
+                    input_path=Path(str(plan["native_input_path"])),
+                    report_path=Path(str(plan["native_report_path"])),
+                    image_path=src_path,
+                    output_path=out_path,
+                    project_id=project_id,
+                    session_id=session_id,
+                    width=width,
+                    height=height,
+                    fps=fps,
+                    duration_seconds=per_scene_duration,
+                    side_pad=side_pad,
+                    panel_width=panel_width,
+                    panel_height=panel_height,
+                    motion_intensity=motion,
+                    scroll_zoom=float(plan.get("native_scroll_zoom") or fixed_scroll_zoom),
+                    vertical_travel=vertical_travel,
+                    logo_path=Path(str(plan["native_visual_overlay"].get("logo_path"))) if plan.get("native_visual_overlay") and plan["native_visual_overlay"].get("logo_path") else None,
+                    audio_path=Path(str(plan.get("native_visual_audio_path"))) if plan.get("native_visual_audio_path") else None,
+                    visual_overlay=dict(plan.get("native_visual_overlay") or {"enabled": False}),
+                    config=config,
+                )
+                return idx, out_path, src_path.name, round(time.perf_counter() - clip_started_at, 3)
+            use_fused_overlay = bool(plan.get("fused_filter_complex"))
+            use_static_layers = (
+                not use_fused_overlay
+                and str(os.getenv("SPAM_VIDEO_STATIC_LAYER_CACHE", "0")).strip().lower() in {"1", "true", "yes", "on"}
+            )
+            if use_static_layers:
+                self._ensure_static_render_layer(src_path, Path(plan["bg_layer"]), str(plan["background_filter"]), "bg")
+                self._ensure_static_render_layer(src_path, Path(plan["fg_layer"]), str(plan["foreground_filter"]), "fg_static")
+                cmd = [
+                    self.ffmpeg_bin,
+                    "-y",
+                    *self._build_filter_thread_args(),
+                    "-loop",
+                    "1",
+                    "-i",
+                    str(plan["bg_layer"]),
+                    "-loop",
+                    "1",
+                    "-i",
+                    str(plan["fg_layer"]),
+                    "-filter_complex",
+                    str(plan["filter_complex"]),
+                    "-map",
+                    "[vout]",
+                    "-t",
+                    str(per_scene_duration),
+                    "-an",
+                    *self._build_video_encode_args(selected_encoder, gop, fps, config),
+                    "-movflags",
+                    "+faststart",
+                    str(out_path),
+                ]
+            else:
+                cmd = [
+                    self.ffmpeg_bin,
+                    "-y",
+                    *self._build_filter_thread_args(),
+                    "-loop",
+                    "1",
+                    "-i",
+                    str(src_path),
+                ]
+                if use_fused_overlay:
+                    cmd.extend([
+                        "-f",
+                        "lavfi",
+                        "-i",
+                        f"nullsrc=s={width}x{height}:r={fps}",
+                    ])
+                    fused_logo_path = plan.get("fused_logo_path")
+                    if fused_logo_path:
+                        cmd.extend(["-i", str(fused_logo_path)])
+                    filter_to_use = str(plan["fused_filter_complex"])
+                else:
+                    filter_to_use = str(plan["legacy_filter_complex"])
+                cmd.extend([
+                    "-filter_complex",
+                    filter_to_use,
+                    "-map",
+                    "[vout]",
+                    "-t",
+                    str(per_scene_duration),
+                    "-an",
+                    *self._build_video_encode_args(selected_encoder, gop, fps, config),
+                    "-movflags",
+                    "+faststart",
+                    str(out_path),
+                ])
             self._run_cmd(cmd, timeout=360)
-            return idx, out_path, src_path.name
+            return idx, out_path, src_path.name, round(time.perf_counter() - clip_started_at, 3)
 
         if max_workers <= 1:
+            clip_timings: list[dict] = []
             for plan in clip_plan:
-                idx, out_path, preview_name = _render_one_clip(plan)
+                idx, out_path, preview_name, clip_elapsed = _render_one_clip(plan)
                 clip_paths.append(out_path)
+                clip_timings.append({"index": idx, "elapsed_s": clip_elapsed})
                 done_count += 1
                 if progress_callback:
                     progress_callback({
@@ -696,13 +1034,16 @@ class VideoPipeline:
                         "files_done": done_count,
                         "preview_text": preview_name,
                     })
+            render_timings["clips"] = clip_timings
         else:
             rendered: dict[int, Path] = {}
+            clip_timings_by_index: dict[int, float] = {}
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
                 futures = [executor.submit(_render_one_clip, plan) for plan in clip_plan]
                 for future in concurrent.futures.as_completed(futures):
-                    idx, out_path, preview_name = future.result()
+                    idx, out_path, preview_name, clip_elapsed = future.result()
                     rendered[idx] = out_path
+                    clip_timings_by_index[idx] = clip_elapsed
                     with done_lock:
                         done_count += 1
                         current_done = done_count
@@ -716,26 +1057,23 @@ class VideoPipeline:
                             "preview_text": preview_name,
                         })
             clip_paths = [rendered[idx] for idx in sorted(rendered.keys())]
+            render_timings["clips"] = [
+                {"index": idx, "elapsed_s": clip_timings_by_index[idx]}
+                for idx in sorted(clip_timings_by_index.keys())
+            ]
 
         safe_name = (output_name or "story_render.mp4").strip().replace("\\", "/").split("/")[-1]
         if not safe_name.lower().endswith(".mp4"):
             safe_name += ".mp4"
         silent_path = dirs["renders_dir"] / safe_name
         session_video_copy = dirs["video_root"] / safe_name
+        combine_started_at = time.perf_counter()
         if len(clip_paths) <= 1:
-            single_cmd = [
-                self.ffmpeg_bin,
-                "-y",
-                "-i",
-                str(clip_paths[0]),
-                *self._build_video_encode_args(selected_encoder, gop, fps, config),
-                "-movflags",
-                "+faststart",
-                str(silent_path),
-            ]
-            self._run_cmd(single_cmd, timeout=480)
+            shutil.copy2(clip_paths[0], silent_path)
+            render_timings["combine_clips_s"] = round(time.perf_counter() - combine_started_at, 3)
         else:
             xfade_cmd = [self.ffmpeg_bin, "-y"]
+            xfade_cmd.extend(self._build_filter_thread_args())
             for clip in clip_paths:
                 xfade_cmd.extend(["-i", str(clip)])
 
@@ -764,6 +1102,7 @@ class VideoPipeline:
                 str(silent_path),
             ])
             self._run_cmd(xfade_cmd, timeout=480)
+            render_timings["combine_clips_s"] = round(time.perf_counter() - combine_started_at, 3)
 
         overlay_audio_path: Path | None = None
         if render_with_audio:
@@ -772,20 +1111,37 @@ class VideoPipeline:
             except FileNotFoundError:
                 overlay_audio_path = None
 
-        visual_overlay = self._apply_visual_overlays(
-            input_path=silent_path,
-            reference_image=image_files[0],
-            audio_path=overlay_audio_path,
-            width=width,
-            height=height,
-            fps=fps,
-            gop=gop,
-            config=config,
-            selected_encoder=selected_encoder,
-            project_id=project_id,
-            session_id=session_id,
-            should_stop=should_stop,
-        )
+        if native_final_visual and native_visual_overlay:
+            visual_overlay = {
+                **{key: value for key, value in native_visual_overlay.items() if key != "logo_path"},
+                "logo_path": self._safe_rel(native_visual_overlay.get("logo_path")) if native_visual_overlay.get("logo_path") else "",
+                "native_shader_overlay": True,
+            }
+            render_timings["visual_overlay_s"] = 0.0
+        elif fused_visual_overlay:
+            visual_overlay_public = {key: value for key, value in fused_visual_overlay.items() if key != "vfx_filter"}
+            visual_overlay = {
+                **visual_overlay_public,
+                "logo_path": self._safe_rel(fused_visual_overlay.get("logo_path")) if fused_visual_overlay.get("logo_path") else "",
+                "fused_single_scene_overlay": True,
+            }
+        else:
+            visual_overlay_started_at = time.perf_counter()
+            visual_overlay = self._apply_visual_overlays(
+                input_path=silent_path,
+                reference_image=image_files[0],
+                audio_path=overlay_audio_path,
+                width=width,
+                height=height,
+                fps=fps,
+                gop=gop,
+                config=config,
+                selected_encoder=selected_encoder,
+                project_id=project_id,
+                session_id=session_id,
+                should_stop=should_stop,
+            )
+            render_timings["visual_overlay_s"] = round(time.perf_counter() - visual_overlay_started_at, 3)
         if progress_callback:
             progress_callback({
                 "stage": "video_render_visual_overlays",
@@ -838,7 +1194,9 @@ class VideoPipeline:
                 "+faststart",
                 str(rendered_with_audio),
             ]
+            mux_started_at = time.perf_counter()
             self._run_cmd(audio_cmd, timeout=300)
+            render_timings["mux_audio_s"] = round(time.perf_counter() - mux_started_at, 3)
             if session_audio_copy != rendered_with_audio:
                 shutil.copy2(rendered_with_audio, session_audio_copy)
             render_with_audio_path = self._rel(rendered_with_audio)
@@ -871,16 +1229,89 @@ class VideoPipeline:
             "transition_seconds": transition_seconds,
             "requested_video_encoder": requested_encoder,
             "video_encoder": selected_encoder,
+            "video_preset": str(config.video_preset or "quality"),
+            "video_cq": int(config.video_cq or 18),
             "gpu_fallback_used": False,
             "visual_overlay": visual_overlay,
             "fallback_reason": "",
             "render_workers": max_workers,
+            "native_gpu_renderer_used": bool(use_native_gpu_clip),
+            "native_gpu_renderer_bin": self._safe_rel(native_renderer_bin) if native_renderer_bin else "",
+            "timings_s": {
+                **render_timings,
+                "total_render_video_s": round(time.perf_counter() - render_started_at, 3),
+            },
         }
         (dirs["manifests_dir"] / "render_manifest.json").write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return manifest
+
+    def _build_static_layer_key(
+        self,
+        image_path: Path,
+        width: int,
+        height: int,
+        fg_static_width: int,
+        fg_static_height: int,
+        background_filter: str,
+        foreground_filter: str,
+    ) -> str:
+        stat = image_path.stat()
+        payload = {
+            "version": 1,
+            "image": str(image_path.resolve()),
+            "mtime_ns": stat.st_mtime_ns,
+            "size": stat.st_size,
+            "width": width,
+            "height": height,
+            "fg_static_width": fg_static_width,
+            "fg_static_height": fg_static_height,
+            "background_filter": background_filter,
+            "foreground_filter": foreground_filter,
+        }
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _ensure_static_render_layer(self, source_image: Path, output_path: Path, filter_complex: str, output_label: str) -> None:
+        if output_path.exists() and output_path.stat().st_size > 0:
+            return
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = output_path.with_name(f"{output_path.stem}.tmp{output_path.suffix}")
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        cmd = [
+            self.ffmpeg_bin,
+            "-y",
+            "-i",
+            str(source_image),
+            "-filter_complex",
+            filter_complex,
+            "-map",
+            f"[{output_label}]",
+            "-frames:v",
+            "1",
+            "-f",
+            "image2",
+            str(temp_path),
+        ]
+        self._run_cmd(cmd, timeout=180)
+        temp_path.replace(output_path)
+
+    @staticmethod
+    def _build_filter_thread_args() -> list[str]:
+        raw_value = str(os.getenv("SPAM_FFMPEG_FILTER_THREADS") or "").strip()
+        if not raw_value:
+            return []
+        try:
+            thread_count = int(raw_value)
+        except ValueError:
+            thread_count = 0
+        if thread_count <= 1:
+            return []
+        value = str(thread_count)
+        return ["-filter_threads", value, "-filter_complex_threads", value]
 
     def merge_audio(
         self,
@@ -1021,6 +1452,7 @@ class VideoPipeline:
         cmd = [
             self.ffmpeg_bin,
             "-y",
+            *self._build_filter_thread_args(),
             "-i",
             str(input_path),
             "-f",
@@ -1877,11 +2309,18 @@ class VideoPipeline:
             return False
         return result.returncode == 0
 
-    @staticmethod
-    def _resolve_ffmpeg_bin() -> str:
+    def _resolve_ffmpeg_bin(self) -> str:
         hit = shutil.which("ffmpeg")
         if hit:
             return hit
+        for candidate in (
+            self.repo_root / ".venv" / "Lib" / "site-packages" / "imageio_ffmpeg" / "binaries",
+            self.repo_root.parent / "spam_audio_video" / ".venv" / "Lib" / "site-packages" / "imageio_ffmpeg" / "binaries",
+        ):
+            if candidate.exists():
+                matches = sorted(candidate.glob("ffmpeg*.exe"))
+                if matches:
+                    return str(matches[0])
         try:
             import imageio_ffmpeg  # type: ignore
 
@@ -1949,13 +2388,116 @@ class VideoPipeline:
             "Install/update NVIDIA driver/FFmpeg NVENC support or choose a working hardware encoder."
         )
 
+    def _resolve_native_story_renderer_bin(self) -> Path:
+        exe_name = "story_gpu_renderer.exe" if os.name == "nt" else "story_gpu_renderer"
+        candidates: list[Path] = []
+        env_path = str(os.getenv("SPAM_VIDEO_NATIVE_RENDERER_BIN") or "").strip()
+        if env_path:
+            candidates.append(Path(env_path))
+        cargo_target_dir = str(os.getenv("CARGO_TARGET_DIR") or "").strip()
+        if cargo_target_dir:
+            candidates.append(Path(cargo_target_dir) / "release" / exe_name)
+        candidates.extend([
+            self.repo_root / "native_renderers" / "story_gpu_renderer" / "target" / "release" / exe_name,
+            Path("D:/cargo-target/story_gpu_renderer/release") / exe_name,
+            Path.home() / ".cargo" / "target" / "release" / exe_name,
+        ])
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return candidate.resolve()
+        checked = ", ".join(str(path) for path in candidates)
+        raise FileNotFoundError(f"Native GPU renderer binary not found. Checked: {checked}")
+
+    def _render_native_gpu_clip(
+        self,
+        *,
+        renderer_bin: Path,
+        input_path: Path,
+        report_path: Path,
+        image_path: Path,
+        output_path: Path,
+        project_id: str,
+        session_id: str,
+        width: int,
+        height: int,
+        fps: int,
+        duration_seconds: float,
+        side_pad: int,
+        panel_width: int,
+        panel_height: int,
+        motion_intensity: float,
+        scroll_zoom: float,
+        vertical_travel: float,
+        logo_path: Path | None,
+        audio_path: Path | None,
+        visual_overlay: dict,
+        config: VideoPipelineConfig,
+    ) -> None:
+        input_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "schema_version": 1,
+            "renderer": "native_gpu",
+            "project_id": project_id,
+            "session_id": session_id,
+            "output_path": str(output_path),
+            "audio_path": str(audio_path) if audio_path else "",
+            "runtime": {
+                "ffmpeg_bin": str(self.ffmpeg_bin),
+            },
+            "video": {
+                "width": int(width),
+                "height": int(height),
+                "fps": int(fps),
+                "duration_seconds": round(float(duration_seconds), 3),
+                "per_scene_duration_seconds": round(float(duration_seconds), 3),
+                "encoder": str(config.video_encoder or "auto"),
+                "preset": str(config.video_preset or "quality"),
+                "cq": int(config.video_cq or 18),
+            },
+            "layout": {
+                "side_pad": int(side_pad),
+                "panel_width": int(panel_width),
+                "panel_height": int(panel_height),
+                "motion_intensity": float(motion_intensity),
+                "scroll_zoom": float(scroll_zoom),
+                "vertical_travel": float(vertical_travel),
+            },
+            "assets": {
+                "images": [str(image_path)],
+                "logo_path": str(logo_path) if logo_path else "",
+            },
+            "visual_overlay": {
+                "enabled": bool(visual_overlay.get("enabled")),
+                "particle_seed": int(visual_overlay.get("particle_seed") or 0),
+                "dust_color": str(visual_overlay.get("dust_color") or "0xF7F7EE"),
+                "spark_color": str(visual_overlay.get("spark_color") or "0xD8D0C0"),
+                "dust_alpha": float(visual_overlay.get("dust_alpha") or 0.30),
+                "audio_visualizer_enabled": bool(visual_overlay.get("audio_visualizer_enabled") and audio_path),
+                "audio_visualizer_color": str(visual_overlay.get("audio_visualizer_color") or visual_overlay.get("spark_color") or "0xD8D0C0"),
+            },
+        }
+        input_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        cmd = [
+            str(renderer_bin),
+            "render",
+            "--config",
+            str(input_path),
+            "--report",
+            str(report_path),
+            "--output",
+            str(output_path),
+        ]
+        self._run_cmd(cmd, timeout=max(240, int(duration_seconds * 12)))
+
     @staticmethod
-    def _bridge_ports_from_config(config: VideoPipelineConfig) -> list[int]:
+    def _bridge_ports_from_values(cdp_url: str | None, cdp_urls: list[str] | None) -> list[int]:
         values: set[int] = set()
         urls: list[str] = []
-        if config.cdp_url:
-            urls.append(str(config.cdp_url))
-        urls.extend(str(item) for item in (config.cdp_urls or []) if str(item or "").strip())
+        if cdp_url:
+            urls.append(str(cdp_url))
+        urls.extend(str(item) for item in (cdp_urls or []) if str(item or "").strip())
         for raw in urls:
             try:
                 parsed = urlparse(raw if "://" in raw else f"http://127.0.0.1:{raw}")
@@ -1965,6 +2507,29 @@ class VideoPipeline:
             if 1 <= candidate <= 65535:
                 values.add(candidate)
         return sorted(values)
+
+    @classmethod
+    def _bridge_ports_from_config(cls, config: VideoPipelineConfig) -> list[int]:
+        return cls._bridge_ports_from_values(config.cdp_url, config.cdp_urls)
+
+    @classmethod
+    def _gemini_bridge_ports_from_config(cls, config: VideoPipelineConfig) -> list[int]:
+        ports = cls._bridge_ports_from_values(config.gemini_cdp_url, config.gemini_cdp_urls)
+        return ports or cls._bridge_ports_from_config(config)
+
+    @classmethod
+    def _gpt_bridge_ports_from_config(cls, config: VideoPipelineConfig) -> list[int]:
+        ports = cls._bridge_ports_from_values(config.gpt_cdp_url, config.gpt_cdp_urls)
+        return ports or cls._bridge_ports_from_config(config)
+
+    @staticmethod
+    def _warm_bridge_ports(client: BrowserBridgeClient, ports: list[int]) -> dict:
+        if not ports:
+            return {"ports": [], "skipped": True}
+        data = client.ping_ports(ports)
+        if data.get("success") is False:
+            raise RuntimeError(f"Browser bridge port warmup failed for ports {ports}: {data}")
+        return data
 
     def _probe_video_encoder(self, encoder: str) -> bool:
         if encoder == "libx264":
@@ -2012,11 +2577,27 @@ class VideoPipeline:
 
         if encoder == "h264_nvenc":
             preset_map = {
+                "throughput": "p1",
                 "quality": "p6",
                 "balanced": "p5",
                 "fast": "p3",
             }
             preset = preset_map.get(preset_raw, preset_raw if preset_raw in {"p1", "p2", "p3", "p4", "p5", "p6", "p7"} else "p6")
+            if preset_raw in {"throughput", "p1"}:
+                return [
+                    "-c:v",
+                    "h264_nvenc",
+                    "-preset",
+                    "p1",
+                    "-rc:v",
+                    "constqp",
+                    "-qp",
+                    str(cq),
+                    "-g",
+                    str(gop),
+                    "-pix_fmt",
+                    "yuv420p",
+                ]
             return [
                 "-c:v",
                 "h264_nvenc",

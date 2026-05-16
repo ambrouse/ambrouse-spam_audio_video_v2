@@ -33,8 +33,11 @@ def clean_for_audio(text: str) -> str:
 
     out: list[str] = []
     for ch in text:
-        if ch in {".", ",", "\n"}:
+        if ch in {".", "\n"}:
             out.append(ch)
+            continue
+        if ch == ",":
+            out.append(" ")
             continue
         if ch.isspace():
             out.append(" ")
@@ -46,12 +49,10 @@ def clean_for_audio(text: str) -> str:
     cleaned = re.sub(r"[ \t]+", " ", cleaned)
     cleaned = re.sub(r" *\n+ *", "\n", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    cleaned = re.sub(r"\s+([.,])", r"\1", cleaned)
-    cleaned = re.sub(r"([.,])\s*([.,])+", r"\2", cleaned)
-    cleaned = re.sub(r",\s*\.", ".", cleaned)
-    cleaned = re.sub(r"\.\s*,", ".", cleaned)
-    cleaned = cleaned.strip(" ,.\n")
-    if cleaned and cleaned[-1] not in ".,":
+    cleaned = re.sub(r"\s+([.])", r"\1", cleaned)
+    cleaned = re.sub(r"([.])\s*([.])+", r"\2", cleaned)
+    cleaned = cleaned.strip(" .\n")
+    if cleaned and cleaned[-1] != ".":
         cleaned += "."
     return cleaned
 

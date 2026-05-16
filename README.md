@@ -38,18 +38,18 @@
 Use this when you want the most stable "download, extract, run" build.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.2
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.3
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.2-win64.zip
+dist/ambrouse-studio-v0.1.3-win64.zip
 ```
 
 User flow:
 
-1. Download `ambrouse-studio-v0.1.2-win64.zip` from GitHub Releases.
+1. Download `ambrouse-studio-v0.1.3-win64.zip` from GitHub Releases.
 2. Extract it to a normal folder, for example `D:\AmbrouseStudio`.
 3. Run `RUN.bat`.
 4. Open `http://127.0.0.1:8080`.
@@ -60,7 +60,7 @@ The portable zip includes Python and Node runtimes, so users do not need to inst
 Need manual input from you before final release:
 
 - send the README banner image; recommended target path: `docs/assets/readme-banner.png`.
-- pick the release version, for example `v0.1.2`.
+- pick the release version, for example `v0.1.3`.
 - decide whether release is standard portable or a very large full/offline model bundle.
 
 ---
@@ -134,6 +134,18 @@ bash setup.sh
 
 Default web UI: `http://localhost:8080` (auto fallback if busy).
 
+For a release/new-machine validation without starting the web server:
+
+```bash
+bash setup.sh --install-only --yes --production-validate --tts-device cuda
+```
+
+This performs dependency checks, validates CUDA TTS imports, prewarms VoxCPM,
+runs unit tests, generates one real VoxCPM WAV with `temperature=0.05` and
+`postprocess=false`, then checks that the WAV is not clipped. Use
+`--skip-production-validation` only when preparing a machine that cannot run
+the local model yet.
+
 GPU runtime defaults are GPU-first after clone:
 
 - `setup.sh` defaults `SETUP_TTS_DEVICE=auto`; when `nvidia-smi` is available it installs CUDA PyTorch for the TTS runtime.
@@ -202,6 +214,7 @@ curl http://127.0.0.1:8080/api/health
 
 Primary docs from story pipeline:
 
+- `docs/setup_release_validation_2026-05-17.md`
 - `spam_audio_video/docs/gpu_runtime_2026-05-14.md`
 - `spam_audio_video/docs/architecture_audio_pipeline.md`
 - `spam_audio_video/docs/architecture_auto_convert_text.md`

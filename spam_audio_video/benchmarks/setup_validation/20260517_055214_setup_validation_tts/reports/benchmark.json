@@ -1,0 +1,102 @@
+{
+  "success": true,
+  "message": "Audio pipeline completed successfully.",
+  "project_id": "setup-validation-bench-audio",
+  "session_id": "setup-validation-session-limit-1",
+  "source_project_id": "setup-validation",
+  "source_session_id": "setup-validation-session",
+  "elapsed_s": 18.413,
+  "config": {
+    "voice_profile": "su-review",
+    "model_key": "voxcpm_vn",
+    "temperature": 0.05,
+    "top_k": 80,
+    "tts_io_workers": 2,
+    "inference_timesteps": 8,
+    "postprocess": false,
+    "cache_enabled": false,
+    "text_limit": 1,
+    "merge_inputs": 0
+  },
+  "audio": {
+    "count": 2,
+    "files": [
+      {
+        "exists": true,
+        "path": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\audio\\combined.wav",
+        "size": 346166,
+        "sha256": "57c76eca9a75a8286a7d14ad67a811f5b6ca00fa2f582ff63f634aad0765f5b0",
+        "sample_rate": 44100,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "frames": 173061,
+        "duration_s": 3.924
+      },
+      {
+        "exists": true,
+        "path": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\audio\\text_0001.wav",
+        "size": 346166,
+        "sha256": "57c76eca9a75a8286a7d14ad67a811f5b6ca00fa2f582ff63f634aad0765f5b0",
+        "sample_rate": 44100,
+        "channels": 1,
+        "sample_width_bytes": 2,
+        "frames": 173061,
+        "duration_s": 3.924
+      }
+    ],
+    "combined": {
+      "exists": true,
+      "path": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\audio\\combined.wav",
+      "size": 346166,
+      "sha256": "57c76eca9a75a8286a7d14ad67a811f5b6ca00fa2f582ff63f634aad0765f5b0",
+      "sample_rate": 44100,
+      "channels": 1,
+      "sample_width_bytes": 2,
+      "frames": 173061,
+      "duration_s": 3.924
+    }
+  },
+  "combined_output": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\audio\\combined.wav",
+  "manifest_cache": {
+    "enabled": false,
+    "root": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\runtime\\tts_cache",
+    "hits": 0,
+    "misses": 1,
+    "items": [
+      {
+        "input": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\tts_inputs\\text_0001.txt",
+        "output": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\projects\\setup-validation-bench-audio\\sessions\\setup-validation-session-limit-1\\audio\\text_0001.wav",
+        "cache_key": "c01fb852ca0083933720de0f8cc4749c1decabb596cd24d865c2f5dee3c87011",
+        "cache_path": "D:\\codeSetting\\youtube spam\\Youtupe\\ambrouse-spam_audio_video_v2\\spam_audio_video\\projects_workspace\\runtime\\tts_cache\\v2\\c01fb852ca0083933720de0f8cc4749c1decabb596cd24d865c2f5dee3c87011.wav",
+        "cache_hit": false
+      }
+    ]
+  },
+  "parsed_worker_logs": {
+    "saved_lines": 1,
+    "cache_hit_lines": 0,
+    "infer_ms": {
+      "count": 1,
+      "total": 4798,
+      "avg": 4798.0,
+      "max": 4798
+    },
+    "io_ms": {
+      "count": 1,
+      "total": 2,
+      "avg": 2.0,
+      "max": 2
+    }
+  },
+  "target": {
+    "baseline_elapsed_s": 0.0,
+    "multiplier_vs_baseline": 0,
+    "pass_4x": false,
+    "first_run_candidate": true,
+    "main_first_run_pass_4x": false,
+    "max_elapsed_for_4x_s": 0,
+    "note": "main_first_run_pass_4x ignores cache-hit acceleration; cache-hit runs are secondary evidence only."
+  },
+  "artifact_dir": "benchmarks\\setup_validation\\20260517_055214_setup_validation_tts",
+  "stderr": ""
+}

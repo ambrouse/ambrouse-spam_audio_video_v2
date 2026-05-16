@@ -2,3 +2,32 @@
 Thumbs.db
 dist/
 .release-cache/
+.venv/
+**/.venv/
+**/.venv-win/
+__pycache__/
+*.py[cod]
+*.pyo
+*.log
+.env
+.logs/
+.setup.log
+.bin-setup.log
+.pytest_cache/
+target/
+
+# Benchmark artifacts: keep lightweight reports, ignore media/audio/frame output.
+spam_audio_video/benchmarks/**
+!spam_audio_video/benchmarks/**/
+!spam_audio_video/benchmarks/**/reports/
+!spam_audio_video/benchmarks/**/reports/**
+!spam_audio_video/benchmarks/**/report.json
+!spam_audio_video/benchmarks/**/summary.md
+!spam_audio_video/benchmarks/**/quality_summary.md
+
+# Runtime caches can be rebuilt and are too large/noisy for GitHub.
+spam_audio_video/projects_workspace/runtime/
+spam_audio_video/projects_workspace/projects/*-bench-*/
+spam_audio_video/projects_workspace/projects/setup-validation/
+spam_audio_video/projects_workspace/projects/test-1-bench-audio/
+spam_audio_video/projects_workspace/projects/test-1-bench-audio-merged/

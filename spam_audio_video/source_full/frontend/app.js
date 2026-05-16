@@ -199,9 +199,9 @@ const UI_STATE_PAGE_KEY = 'storyPipeline.activePage';
 const UI_STATE_ASSETS_TAB_KEY = 'storyPipeline.assetsTab';
 
 const CHUNK_PRESETS = {
-  low: { min_words: 16, max_words: 64, label: 'Thap' },
-  medium: { min_words: 20, max_words: 72, label: 'Trung' },
-  high: { min_words: 24, max_words: 88, label: 'Cao' },
+  low: { min_words: 30, max_words: 64, label: 'Thap' },
+  medium: { min_words: 36, max_words: 72, label: 'Trung' },
+  high: { min_words: 42, max_words: 88, label: 'Cao' },
 };
 
 const DEFAULT_REWRITE_PROMPT = `Bạn là biên tập truyện audio tiếng Việt.
@@ -264,17 +264,20 @@ function normalizeBridgeBaseUrl(value) {
 }
 
 const VIDEO_PROD_PRESET = {
-  scene_duration_seconds: 60,
+  scene_duration_seconds: 30,
   width: 3840,
   height: 2160,
   fps: 60,
   motion_intensity: 0.012,
   provider: 'bridge_gemini',
   image_provider: 'bridge_gpt',
+  gemini_ports: [9222, 9223, 9224],
   gpt_ports: [9222, 9223, 9224],
   gpt_image_limit: 10,
   prompt_tts_input_limit: 40,
   render_workers: 6,
+  video_encoder: 'auto',
+  video_preset: 'quality',
 };
 
 
@@ -442,9 +445,11 @@ function applyChunkPreset(presetKey) {
 }
 
 function currentRewriteConfig() {
-  const rawWanted = Number(rewriteWorkersInput?.value || 2);
-  const requestedWorkers = Number.isFinite(rawWanted) && rawWanted > 0 ? Math.floor(rawWanted) : 2;
-  const parallelWorkers = Math.max(1, requestedWorkers);
+  const geminiPorts = parseGeminiPorts();
+  const geminiCdpUrls = geminiPorts.map((port) => `http://127.0.0.1:${port}`);
+  const rawWanted = Number(rewriteWorkersInput?.value || 9);
+  const requestedWorkers = Number.isFinite(rawWanted) && rawWanted > 0 ? Math.floor(rawWanted) : 9;
+  const parallelWorkers = Math.max(1, Math.min(9, requestedWorkers));
   if (rewriteWorkersInput) {
     rewriteWorkersInput.value = String(parallelWorkers);
   }
@@ -455,7 +460,8 @@ function currentRewriteConfig() {
     rewrite_prompt: (rewritePromptInput?.value || '').trim() || DEFAULT_REWRITE_PROMPT,
     bridge_base_url: normalizeBridgeBaseUrl(),
     bridge_timeout_s: 600,
-    cdp_urls: [],
+    cdp_url: geminiCdpUrls.length ? geminiCdpUrls[0] : null,
+    cdp_urls: geminiCdpUrls,
     parallel_workers: parallelWorkers,
   };
 }
@@ -1354,7 +1360,10 @@ function applyVideoProductionDefaults() {
     el.removeAttribute('title');
   }
   if (videoActionHint) {
-    videoActionHint.textContent = 'Video config editable. Default preset: 4K 60fps.';
+    videoActionHint.textContent = 'Video config editable. Default preset: 4K 60fps, 30s/image.';
+  }
+  if (geminiPortsInput && !String(geminiPortsInput.value || '').trim()) {
+    geminiPortsInput.value = VIDEO_PROD_PRESET.gemini_ports.join(',');
   }
   if (videoGptPortsInput && !String(videoGptPortsInput.value || '').trim()) {
     videoGptPortsInput.value = VIDEO_PROD_PRESET.gpt_ports.join(',');
@@ -1384,12 +1393,14 @@ function resolveVideoEngineHint(result, successMessage) {
 }
 
 function buildVideoPayload() {
+  const geminiPorts = parseGeminiPorts();
+  const geminiCdpUrls = geminiPorts.map((port) => `http://127.0.0.1:${port}`);
   const gptPorts = parseGptPorts();
   const gptCdpUrls = gptPorts.map((port) => `http://127.0.0.1:${port}`);
-  const requestedPromptWorkers = Number(rewriteWorkersInput?.value || 2);
+  const requestedPromptWorkers = Number(rewriteWorkersInput?.value || 9);
   const promptWorkers = Number.isFinite(requestedPromptWorkers) && requestedPromptWorkers > 0
-    ? Math.floor(requestedPromptWorkers)
-    : 2;
+    ? Math.min(9, Math.floor(requestedPromptWorkers))
+    : 9;
   const sceneDurationSeconds = parseVideoNumber(videoSceneDurationInput, VIDEO_PROD_PRESET.scene_duration_seconds, 1);
   const imageCount = Math.floor(parseVideoNumber(videoImageCountInput, VIDEO_PROD_PRESET.gpt_image_limit, 1));
   const promptTtsInputLimit = Math.floor(parseVideoNumber(videoPromptTtsInputLimitInput, VIDEO_PROD_PRESET.prompt_tts_input_limit, 1));
@@ -1404,8 +1415,12 @@ function buildVideoPayload() {
     scene_duration_seconds: Number(sceneDurationSeconds),
     provider: String(VIDEO_PROD_PRESET.provider),
     image_provider: String(VIDEO_PROD_PRESET.image_provider),
-    cdp_url: gptCdpUrls.length ? gptCdpUrls[0] : null,
-    cdp_urls: gptCdpUrls,
+    cdp_url: geminiCdpUrls.length ? geminiCdpUrls[0] : null,
+    cdp_urls: geminiCdpUrls,
+    gemini_cdp_url: geminiCdpUrls.length ? geminiCdpUrls[0] : null,
+    gemini_cdp_urls: geminiCdpUrls,
+    gpt_cdp_url: gptCdpUrls.length ? gptCdpUrls[0] : null,
+    gpt_cdp_urls: gptCdpUrls,
     prompt_parallel_workers: promptWorkers,
     prompt_delay_seconds: 0.6,
     width,
@@ -1415,6 +1430,10 @@ function buildVideoPayload() {
     gpt_image_limit: Number(imageCount),
     prompt_tts_input_limit: Number(promptTtsInputLimit),
     render_workers: renderWorkers,
+    video_encoder: VIDEO_PROD_PRESET.video_encoder,
+    video_preset: VIDEO_PROD_PRESET.video_preset,
+    video_cq: 18,
+    video_crf: 18,
     bridge_base_url: normalizeBridgeBaseUrl(),
     bridge_timeout_s: 600,
     story_context: String(videoStoryContextInput?.value || '').trim(),
@@ -1433,13 +1452,15 @@ function buildRunAllPayload() {
     temperature: Number(temperatureInput.value),
     top_k: Number(topKInput.value),
     max_chars_tts: Number(maxCharsInput.value),
-    tts_io_workers: Number(ttsIoWorkersInput?.value || 2),
+    tts_io_workers: Math.max(1, Math.min(6, Number(ttsIoWorkersInput?.value || 6))),
     video_enabled: true,
     video_scene_duration_seconds: videoConfig.scene_duration_seconds,
     video_provider: videoConfig.provider,
     video_image_provider: videoConfig.image_provider,
-    video_gpt_cdp_url: videoConfig.cdp_url,
-    video_gpt_cdp_urls: videoConfig.cdp_urls,
+    video_gemini_cdp_url: videoConfig.gemini_cdp_url,
+    video_gemini_cdp_urls: videoConfig.gemini_cdp_urls,
+    video_gpt_cdp_url: videoConfig.gpt_cdp_url,
+    video_gpt_cdp_urls: videoConfig.gpt_cdp_urls,
     video_prompt_workers: videoConfig.prompt_parallel_workers,
     video_prompt_delay_seconds: videoConfig.prompt_delay_seconds,
     video_width: videoConfig.width,
@@ -1643,7 +1664,7 @@ runBtn.addEventListener('click', async () => {
     temperature: Number(temperatureInput.value),
     top_k: Number(topKInput.value),
     max_chars: Number(maxCharsInput.value),
-    tts_io_workers: Number(ttsIoWorkersInput?.value || 2),
+    tts_io_workers: Math.max(1, Math.min(6, Number(ttsIoWorkersInput?.value || 6))),
     postprocess: false,
   }, 'Generating project audio');
   if (result.ok) {
@@ -1775,7 +1796,7 @@ runCollectCleanBtn?.addEventListener('click', async () => {
 });
 
 function parseGeminiPorts() {
-  const raw = String(bridgePortsInput?.value || geminiPortsInput?.value || '')
+  const raw = String(geminiPortsInput?.value || bridgePortsInput?.value || '')
     .replace(/\uFF0C/g, ',')
     .replace(/[;\n\r\t ]+/g, ',');
   const fromList = raw
@@ -1784,7 +1805,7 @@ function parseGeminiPorts() {
     .filter((x) => Number.isFinite(x) && x > 0 && x <= 65535);
   if (fromList.length) {
     const unique = [...new Set(fromList)].sort((a, b) => a - b);
-    if (bridgePortsInput) {
+    if (bridgePortsInput && !String(geminiPortsInput?.value || '').trim()) {
       bridgePortsInput.value = unique.join(',');
     }
     if (geminiPortsInput) {
@@ -1792,11 +1813,11 @@ function parseGeminiPorts() {
     }
     return unique;
   }
-  return [9222];
+  return [...VIDEO_PROD_PRESET.gemini_ports];
 }
 
 function parseGptPorts() {
-  const raw = String(bridgePortsInput?.value || videoGptPortsInput?.value || '')
+  const raw = String(videoGptPortsInput?.value || bridgePortsInput?.value || '')
     .replace(/\uFF0C/g, ',')
     .replace(/[;\n\r\t ]+/g, ',');
   const fromList = raw
@@ -1805,7 +1826,7 @@ function parseGptPorts() {
     .filter((x) => Number.isFinite(x) && x > 0 && x <= 65535);
   if (fromList.length) {
     const unique = [...new Set(fromList)].sort((a, b) => a - b);
-    if (bridgePortsInput) {
+    if (bridgePortsInput && !String(videoGptPortsInput?.value || '').trim()) {
       bridgePortsInput.value = unique.join(',');
     }
     if (videoGptPortsInput) {
@@ -2629,9 +2650,13 @@ runVideoOnlyBtn?.addEventListener('click', async () => {
 
 async function runCreateTtsInputs() {
   if (!ensureProjectReady()) return;
+  const minWords = Math.max(30, Math.floor(Number(chunkMinWordsInput?.value || 30)));
+  const maxWords = Math.max(minWords, Math.floor(Number(chunkMaxWordsInput?.value || 64)));
+  if (chunkMinWordsInput) chunkMinWordsInput.value = String(minWords);
+  if (chunkMaxWordsInput) chunkMaxWordsInput.value = String(maxWords);
   const result = await runJson(`/api/convert/projects/${encodeURIComponent(activeProjectId)}/chunk`, {
-    min_words: Number(chunkMinWordsInput?.value || 24),
-    max_words: Number(chunkMaxWordsInput?.value || 96),
+    min_words: minWords,
+    max_words: maxWords,
     session_id: activeSessionId,
   }, 'Creating TTS inputs');
   if (result.ok) {
@@ -3428,7 +3453,13 @@ if (bridgeBaseUrlInput) {
   bridgeBaseUrlInput.value = DEFAULT_BRIDGE_BASE_URL;
 }
 if (bridgePortsInput && !String(bridgePortsInput.value || '').trim()) {
-  bridgePortsInput.value = VIDEO_PROD_PRESET.gpt_ports.join(',');
+  bridgePortsInput.value = VIDEO_PROD_PRESET.gemini_ports.join(',');
+}
+if (geminiPortsInput && !String(geminiPortsInput.value || '').trim()) {
+  geminiPortsInput.value = VIDEO_PROD_PRESET.gemini_ports.join(',');
+}
+if (videoGptPortsInput && !String(videoGptPortsInput.value || '').trim()) {
+  videoGptPortsInput.value = VIDEO_PROD_PRESET.gpt_ports.join(',');
 }
 loadPromptDefault({ silent: true }).catch(() => {});
 loadVideoPromptDefault({ silent: true }).catch(() => {});
