@@ -5,12 +5,24 @@ import os
 import time
 import subprocess
 import threading
+import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
 
 from auto_convert_text.storage.project_store import ProjectStore
 from auto_convert_text.storage.shared_project_registry import SharedProjectRegistry
+
+DEFAULT_TTS_INFERENCE_TIMESTEPS = max(
+    4,
+    min(20, int(os.getenv("SPAM_TTS_INFERENCE_TIMESTEPS", "6") or "6")),
+)
+DEFAULT_TTS_RETRY_BADCASE = str(os.getenv("SPAM_TTS_RETRY_BADCASE", "1")).strip().lower() in {"1", "true", "yes", "on"}
+DEFAULT_TTS_RETRY_BADCASE_MAX_TIMES = max(
+    1,
+    min(3, int(os.getenv("SPAM_TTS_RETRY_BADCASE_MAX_TIMES", "1") or "1")),
+)
+DEFAULT_TTS_CFG_VALUE = max(0.5, min(4.0, float(os.getenv("SPAM_TTS_CFG_VALUE", "2.0") or "2.0")))
 
 
 @dataclass
@@ -110,11 +122,35 @@ class AudioPipelineService:
         self.text_root.mkdir(parents=True, exist_ok=True)
         return self.text_root
 
+    def _short_vieneu_venv_dir(self) -> Path | None:
+        explicit = str(os.environ.get("SETUP_VIENEU_VENV_DIR") or "").strip()
+        if explicit:
+            return Path(explicit)
+        if os.name != "nt":
+            return None
+        repo_win = str(self.repo_root).replace("\\", "/")
+        digest = hashlib.sha1(repo_win.encode("utf-8")).hexdigest()[:8]
+        drive = self.repo_root.drive.rstrip(":")
+        if not drive:
+            return None
+        return Path(f"{drive}:/.vieneu-{digest}")
+
     def _pick_python(self) -> Path | str:
-        candidates = [
+        explicit_python = str(os.environ.get("SPAM_TTS_PYTHON") or "").strip()
+        candidates: list[Path] = []
+        if explicit_python:
+            candidates.append(Path(explicit_python))
+        short_venv = self._short_vieneu_venv_dir()
+        if short_venv is not None:
+            candidates.extend([
+                short_venv / "Scripts" / "python.exe",
+                short_venv / "bin" / "python",
+            ])
+        candidates.extend([
             self.auto_ttv_root / "VieNeu-TTS" / ".venv-win" / "Scripts" / "python.exe",
             self.auto_ttv_root / "VieNeu-TTS" / ".venv" / "Scripts" / "python.exe",
-        ]
+            self.auto_ttv_root / "VieNeu-TTS" / ".venv" / "bin" / "python",
+        ])
         for candidate in candidates:
             if candidate.exists():
                 return candidate
@@ -145,7 +181,7 @@ class AudioPipelineService:
         top_k: int = 80,
         max_chars: int = 420,
         tts_io_workers: int = 2,
-        inference_timesteps: int = 8,
+        inference_timesteps: int = DEFAULT_TTS_INFERENCE_TIMESTEPS,
         postprocess: bool = False,
         noise_reduction: float = 0.12,
         highpass_hz: float = 70.0,
@@ -161,6 +197,8 @@ class AudioPipelineService:
         anti_leak_trim: bool = True,
         anti_leak_max_ms: int = 900,
         tts_cache_enabled: bool = True,
+        retry_badcase: bool = DEFAULT_TTS_RETRY_BADCASE,
+        cfg_value: float = DEFAULT_TTS_CFG_VALUE,
         progress_callback: Callable[[dict], None] | None = None,
     ) -> PipelineResult:
         if not self.worker_script.exists():
@@ -231,6 +269,9 @@ class AudioPipelineService:
                 "max_chars": max(80, min(420, max_chars)),
                 "io_workers": max(1, min(6, int(tts_io_workers))),
                 "inference_timesteps": max(4, min(20, int(inference_timesteps))),
+                "cfg_value": max(0.5, min(4.0, float(cfg_value))),
+                "retry_badcase": bool(retry_badcase),
+                "retry_badcase_max_times": DEFAULT_TTS_RETRY_BADCASE_MAX_TIMES if retry_badcase else 0,
                 "device": self._runtime_device(),
                 "postprocess": bool(postprocess),
                 "noise_reduction": max(0.0, min(1.0, noise_reduction)),

@@ -1051,6 +1051,9 @@ if [[ ! -x "./auto_text_to_voice/VieNeu-TTS/.venv-win/Scripts/python.exe" ]]; th
 fi
 step "Install and validate TTS runtime" "$TTS_TASKS"
 ensure_vieneu_runtime
+if [[ -n "${PIPELINE_PY:-}" ]]; then
+  export SPAM_TTS_PYTHON="$PIPELINE_PY"
+fi
 step_tick
 
 step "Prewarm TTS model" 1

@@ -392,9 +392,7 @@ def main() -> int:
         "--artifact-root",
         str(video_root),
     ]
-    video_env = os.environ.copy()
-    video_env["SPAM_VIDEO_NATIVE_AUDIO_PATH"] = str(final_audio_path)
-    _run_command(video_cmd, artifact_dir / "logs" / "video_benchmark_command.log", env=video_env)
+    _run_command(video_cmd, artifact_dir / "logs" / "video_benchmark_command.log", env=os.environ.copy())
     video_artifact = _latest_child(video_root)
     _copytree_contents(video_artifact, artifact_dir / "video" / "artifact")
     video_report = json.loads((video_artifact / "reports" / "benchmark.json").read_text(encoding="utf-8"))

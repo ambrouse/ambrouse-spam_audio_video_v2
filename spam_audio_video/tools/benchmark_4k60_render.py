@@ -222,7 +222,7 @@ def main() -> int:
         render_workers=max(1, int(args.render_workers)),
     )
     if artifact_dir:
-        renderer_input = pipeline.build_native_renderer_input(
+        renderer_input = pipeline.build_story_renderer_input(
             args.project_id,
             args.session_id,
             cfg,

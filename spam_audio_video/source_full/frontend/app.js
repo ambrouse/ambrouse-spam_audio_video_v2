@@ -265,8 +265,8 @@ function normalizeBridgeBaseUrl(value) {
 
 const VIDEO_PROD_PRESET = {
   scene_duration_seconds: 30,
-  width: 3840,
-  height: 2160,
+  width: 1920,
+  height: 1080,
   fps: 60,
   motion_intensity: 0.012,
   provider: 'bridge_gemini',
@@ -277,7 +277,7 @@ const VIDEO_PROD_PRESET = {
   prompt_tts_input_limit: 40,
   render_workers: 6,
   video_encoder: 'auto',
-  video_preset: 'quality',
+  video_preset: 'throughput',
 };
 
 
@@ -1360,7 +1360,7 @@ function applyVideoProductionDefaults() {
     el.removeAttribute('title');
   }
   if (videoActionHint) {
-    videoActionHint.textContent = 'Video config editable. Default preset: 4K 60fps, 30s/image.';
+    videoActionHint.textContent = 'Video config editable. Default preset: 1080p 60fps, 30s/image.';
   }
   if (geminiPortsInput && !String(geminiPortsInput.value || '').trim()) {
     geminiPortsInput.value = VIDEO_PROD_PRESET.gemini_ports.join(',');

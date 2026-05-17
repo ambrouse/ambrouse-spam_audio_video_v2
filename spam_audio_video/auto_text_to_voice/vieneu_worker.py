@@ -25,6 +25,33 @@ from run_vieneu_batch_clone import (
 TTS_CACHE_VERSION = 2
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = str(os.environ.get(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _coerce_bool(value: Any, default: bool) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    raw = str(value).strip().lower()
+    if not raw:
+        return default
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _env_float(name: str, default: float, low: float, high: float) -> float:
+    raw = str(os.environ.get(name) or "").strip()
+    try:
+        value = float(raw) if raw else default
+    except ValueError:
+        value = default
+    return max(low, min(high, value))
+
+
 class WarmRuntime:
     def __init__(self) -> None:
         self.tts = None
@@ -109,6 +136,12 @@ class WarmRuntime:
         if runtime_device == "cuda":
             try:
                 torch.set_float32_matmul_precision("high")
+            except Exception:
+                pass
+            try:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+                torch.backends.cudnn.benchmark = True
             except Exception:
                 pass
 
@@ -218,25 +251,29 @@ class WarmRuntime:
         selected: Any,
         inference_timesteps: int,
         max_len: int,
+        cfg_value: float,
+        retry_badcase: bool,
+        retry_badcase_max_times: int,
     ) -> np.ndarray:
         assert self.tts is not None
         from voxcpm.model.utils import next_and_close  # pylint: disable=import-error
 
         target_text = re.sub(r"\s+", " ", text.replace("\n", " ")).strip()
         prompt_cache = self._get_prompt_cache(selected)
-        generate_result = self.tts.tts_model._generate_with_prompt_cache(
-            target_text=target_text,
-            prompt_cache=prompt_cache,
-            min_len=2,
-            max_len=max_len,
-            inference_timesteps=inference_timesteps,
-            cfg_value=2.0,
-            retry_badcase=True,
-            retry_badcase_max_times=3,
-            retry_badcase_ratio_threshold=6.0,
-            streaming=False,
-        )
-        wav, _, _ = next_and_close(generate_result)
+        with torch.inference_mode():
+            generate_result = self.tts.tts_model._generate_with_prompt_cache(
+                target_text=target_text,
+                prompt_cache=prompt_cache,
+                min_len=2,
+                max_len=max_len,
+                inference_timesteps=inference_timesteps,
+                cfg_value=cfg_value,
+                retry_badcase=retry_badcase,
+                retry_badcase_max_times=retry_badcase_max_times,
+                retry_badcase_ratio_threshold=6.0,
+                streaming=False,
+            )
+            wav, _, _ = next_and_close(generate_result)
         return wav.squeeze(0).cpu().numpy()
 
     def synth(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -254,12 +291,17 @@ class WarmRuntime:
         max_chars = int(payload.get("max_chars", 256))
         io_workers = max(1, min(6, int(payload.get("io_workers", 2))))
         inference_timesteps = max(4, min(20, int(payload.get("inference_timesteps", 8))))
-        postprocess = bool(payload.get("postprocess", True))
-        anti_leak_trim = bool(payload.get("anti_leak_trim", True))
+        cfg_value = max(0.5, min(4.0, float(payload.get("cfg_value", _env_float("SPAM_TTS_CFG_VALUE", 2.0, 0.5, 4.0)))))
+        retry_badcase = _coerce_bool(payload.get("retry_badcase"), _env_bool("SPAM_TTS_RETRY_BADCASE", True))
+        retry_badcase_max_times = max(1, min(3, int(payload.get("retry_badcase_max_times", 1)))) if retry_badcase else 0
+        max_len_scale = _env_float("SPAM_TTS_MAX_LEN_SCALE", 2.9, 2.2, 3.4)
+        max_len_padding = max(40, min(140, int(os.environ.get("SPAM_TTS_MAX_LEN_PADDING", "70") or 70)))
+        postprocess = _coerce_bool(payload.get("postprocess"), True)
+        anti_leak_trim = _coerce_bool(payload.get("anti_leak_trim"), True)
         anti_leak_max_ms = max(80, min(1200, int(payload.get("anti_leak_max_ms", 900))))
         head_pre_roll_ms = max(0, min(40, int(payload.get("head_pre_roll_ms", 10))))
         tail_keep_ms = max(20, min(250, int(payload.get("tail_keep_ms", 100))))
-        cache_enabled = bool(payload.get("cache_enabled", True))
+        cache_enabled = _coerce_bool(payload.get("cache_enabled"), True)
         cache_root = Path(
             payload.get("cache_root")
             or Path(payload.get("project_root", ".")).resolve().parents[1] / "projects_workspace" / "runtime" / "tts_cache"
@@ -324,6 +366,11 @@ class WarmRuntime:
             f"text_files={len(text_files)}",
             f"io_workers={io_workers}",
             f"inference_timesteps={inference_timesteps}",
+            f"cfg_value={cfg_value}",
+            f"retry_badcase={retry_badcase}",
+            f"retry_badcase_max_times={retry_badcase_max_times}",
+            f"max_len_scale={max_len_scale}",
+            f"max_len_padding={max_len_padding}",
             f"cache_enabled={cache_enabled}",
         ]
 
@@ -351,6 +398,11 @@ class WarmRuntime:
 
         key_settings = {
             "inference_timesteps": inference_timesteps,
+            "cfg_value": cfg_value,
+            "retry_badcase": retry_badcase,
+            "retry_badcase_max_times": retry_badcase_max_times,
+            "max_len_scale": max_len_scale,
+            "max_len_padding": max_len_padding,
             "temperature": max(0.01, min(1.2, temperature)),
             "top_k": max(1, min(100, top_k)),
             "max_chars": max_chars,
@@ -392,7 +444,7 @@ class WarmRuntime:
             max_pending = max(2, io_workers * 2)
             for idx, (txt_file, text) in enumerate(zip(valid_files, infer_texts), start=1):
                 try:
-                    dynamic_max_len = max(200, min(2200, int(len(text) * 3.2) + 80))
+                    dynamic_max_len = max(180, min(1800, int(len(text) * max_len_scale) + max_len_padding))
                     cache_key = self._build_tts_cache_key(
                         text,
                         selected,
@@ -430,6 +482,9 @@ class WarmRuntime:
                         selected=selected,
                         inference_timesteps=inference_timesteps,
                         max_len=dynamic_max_len,
+                        cfg_value=cfg_value,
+                        retry_badcase=retry_badcase,
+                        retry_badcase_max_times=retry_badcase_max_times,
                     )
                     infer_ms = int((time.perf_counter() - t0) * 1000)
                     wav_arr = np.asarray(wav, dtype=np.float32)
@@ -500,7 +555,8 @@ class WarmRuntime:
             generated_files.append(generated_by_index[idx])
 
         if not generated_files:
-            raise RuntimeError("No audio file was generated from input text files.")
+            tail = "\n".join(logs[-12:])
+            raise RuntimeError(f"No audio file was generated from input text files.\n{tail}")
         if failed_files:
             raise RuntimeError(f"Failed files: {', '.join(failed_files)}")
 
@@ -517,6 +573,11 @@ class WarmRuntime:
             "top_k": max(1, min(100, top_k)),
             "io_workers": io_workers,
             "inference_timesteps": inference_timesteps,
+            "cfg_value": cfg_value,
+            "retry_badcase": retry_badcase,
+            "retry_badcase_max_times": retry_badcase_max_times,
+            "max_len_scale": max_len_scale,
+            "max_len_padding": max_len_padding,
             "anti_leak_trim": anti_leak_trim,
             "anti_leak_max_ms": anti_leak_max_ms,
             "anti_leak_trim_applied_files": trim_applied,
@@ -539,6 +600,7 @@ class WarmRuntime:
             "inputs": [str(p) for p in text_files],
             "outputs": [str(p) for p in generated_files],
             "combined_output": str(merged_file),
+            "merge_mode": "streaming",
             "cache": {
                 "enabled": cache_enabled,
                 "root": str(cache_root),
@@ -613,27 +675,33 @@ def _find_last_speech_idx(env: np.ndarray, threshold: float, run_len: int) -> in
 def _merge_wav_files_with_pauses(input_paths: list[Path], output_path: Path, pauses_ms: list[int]) -> Path:
     if not input_paths:
         raise ValueError("No input audio files provided for merge.")
-    merged_chunks = []
     sample_rate = None
     channels = None
-    for idx, wav_path in enumerate(input_paths):
-        audio, sr = sf.read(str(wav_path), dtype="float32", always_2d=True)
-        if sample_rate is None:
-            sample_rate = sr
-            channels = audio.shape[1]
-        elif sr != sample_rate:
-            raise ValueError(f"Sample rate mismatch in {wav_path.name}: {sr} != {sample_rate}")
-        elif audio.shape[1] != channels:
-            raise ValueError(f"Channel mismatch in {wav_path.name}: {audio.shape[1]} != {channels}")
-        merged_chunks.append(audio)
-        if idx < len(input_paths) - 1:
-            pause_ms = pauses_ms[idx] if idx < len(pauses_ms) else 220
-            pause_samples = int((pause_ms / 1000.0) * sample_rate)
-            if pause_samples > 0:
-                merged_chunks.append(np.zeros((pause_samples, channels), dtype=np.float32))
-    merged = np.concatenate(merged_chunks, axis=0)
+
+    with sf.SoundFile(str(input_paths[0]), mode="r") as first_file:
+        sample_rate = int(first_file.samplerate)
+        channels = int(first_file.channels)
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sf.write(str(output_path), merged, sample_rate)
+    with sf.SoundFile(str(output_path), mode="w", samplerate=sample_rate, channels=channels) as writer:
+        for idx, wav_path in enumerate(input_paths):
+            with sf.SoundFile(str(wav_path), mode="r") as reader:
+                if int(reader.samplerate) != sample_rate:
+                    raise ValueError(f"Sample rate mismatch in {wav_path.name}: {reader.samplerate} != {sample_rate}")
+                if int(reader.channels) != channels:
+                    raise ValueError(f"Channel mismatch in {wav_path.name}: {reader.channels} != {channels}")
+                while True:
+                    block = reader.read(frames=131_072, dtype="float32", always_2d=True)
+                    if block.size == 0:
+                        break
+                    writer.write(block)
+            if idx < len(input_paths) - 1:
+                pause_ms = pauses_ms[idx] if idx < len(pauses_ms) else 220
+                pause_samples = int((pause_ms / 1000.0) * sample_rate)
+                while pause_samples > 0:
+                    block_samples = min(pause_samples, 131_072)
+                    writer.write(np.zeros((block_samples, channels), dtype=np.float32))
+                    pause_samples -= block_samples
     return output_path
 
 

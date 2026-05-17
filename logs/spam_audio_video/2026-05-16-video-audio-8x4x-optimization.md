@@ -20,7 +20,7 @@ Started executing `plans/plan-video-audio-8x4x-quality-preserving-optimization.m
 
 - `python -m py_compile spam_audio_video/auto_text_to_voice/vieneu_worker.py spam_audio_video/source_full/backend/pipeline_service.py spam_audio_video/tools/benchmark_tts_pipeline.py` passed.
 - `python -m unittest spam_audio_video.tests.test_tts_chunk_policy` passed.
-- `cargo fmt --check && cargo build --release` passed in `spam_audio_video/native_renderers/story_gpu_renderer`.
+- `cargo fmt --check && cargo build --release` passed in the renderer crate. The production path later moved this crate to `spam_audio_video/renderers/story_gpu_renderer`.
 
 ## Real Audio Smoke Benchmarks
 
@@ -102,7 +102,7 @@ Runs:
 
 - Public VoxCPM API exposes `generate(...)` and `generate_streaming(...)`, but no true batch method.
 - VoxCPM CLI `batch` reads many lines but loops and calls `tts.generate(...)` per text.
-- Internal `VoxCPMModel._inference(...)` and `VoxCPM2Model._inference(...)` accept batch-shaped tensors, which means a real batch prototype may be possible.
+- Internal `VoxCPMModel._inference(...)` accepts batch-shaped tensors, which means a real batch prototype may be possible.
 - The shipped generation wrapper is not batch-safe as-is:
   - stop condition checks sample `0`;
   - non-streaming output squeezes batch dimension `0`;

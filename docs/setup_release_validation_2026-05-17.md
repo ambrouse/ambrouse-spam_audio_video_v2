@@ -48,14 +48,17 @@ flowchart TD
 
 ## Latest Local Validation
 
-Latest benchmark report kept in the repository reports tree:
+Historical setup-validation reports were removed from source during the
+`v0.1.6` cleanup so the repository does not carry generated benchmark output.
+Run the command below on a target Windows machine to regenerate local reports
+under the ignored `spam_audio_video/benchmarks/setup_validation/` tree:
 
-```text
-spam_audio_video/benchmarks/setup_validation/20260517_055214_setup_validation_tts/reports/summary.md
-spam_audio_video/benchmarks/setup_validation/20260517_055214_setup_validation_tts/reports/benchmark.json
+```bash
+cd spam_audio_video
+bash setup.sh --install-only --yes --production-validate --tts-device cuda
 ```
 
-Observed result:
+Last observed local result before report cleanup:
 
 | Metric | Value |
 | --- | --- |
@@ -68,8 +71,8 @@ Observed result:
 | WAV envelope | peak `-6.06 dBFS`, RMS `-18.78 dBFS` |
 | Quality config | `temperature=0.05`, `top_k=80`, `postprocess=false` |
 
-Audio/media artifacts stay ignored by `.gitignore`; only reports are intended
-for GitHub.
+Audio/media artifacts and generated validation reports stay ignored by
+`.gitignore`; keep only summarized release evidence in docs.
 
 ## Portable Release Validation
 

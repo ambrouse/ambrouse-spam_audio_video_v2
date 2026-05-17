@@ -2,6 +2,11 @@
 
 Date: 2026-05-03
 
+Status: historical report. Current production video rendering is the
+Rust/D3D11/NVENC story timeline path documented in
+`docs/release_notes_v0.1.6.md`; legacy silent/final filenames are no longer
+the current release contract.
+
 ## Scope
 
 Validate the new session-first video pipeline runtime from API layer through generated artifacts.
@@ -60,20 +65,16 @@ Tested session:
 - Result: PASS
 - Assertions:
   - HTTP 200
-  - render path:
-    - `projects_workspace/projects/test-1/sessions/session_ch0001_to_ch0050/video/renders/story_silent.mp4`
-  - downloadable session copy exists:
-    - `projects_workspace/projects/test-1/sessions/session_ch0001_to_ch0050/video/story_silent.mp4`
+  - render path followed the old contract.
+  - current contract uses `story_render*.mp4`
 
 7. Video merge API
 - Endpoint: `POST /api/pipeline/video/merge`
 - Result: PASS
 - Assertions:
   - HTTP 200
-  - final path:
-    - `projects_workspace/projects/test-1/sessions/session_ch0001_to_ch0050/video/final/final_story.mp4`
-  - downloadable session copy exists:
-    - `projects_workspace/projects/test-1/sessions/session_ch0001_to_ch0050/video/final_story.mp4`
+  - final path followed the old contract.
+  - current contract uses `story_render*_with_audio.mp4`
 
 8. Full video run API
 - Endpoint: `POST /api/pipeline/video/run`

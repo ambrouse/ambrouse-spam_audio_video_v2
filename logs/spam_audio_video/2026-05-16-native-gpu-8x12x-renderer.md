@@ -1,5 +1,9 @@
 # 2026-05-16 Native GPU 8x-12x Renderer
 
+Status: historical investigation log. The production renderer was later moved
+to `spam_audio_video/renderers/story_gpu_renderer` and became the only video
+path in `v0.1.6`.
+
 ## Work Completed
 
 - Installed Rust via `winget`.
@@ -9,8 +13,8 @@
   - `spam_audio_video/benchmarks/native_gpu_4k60/`
 - Updated benchmark script to create timestamped artifact folders with input, output, reports, frames, screenshots, and logs.
 - Added render quality comparison tool with metadata checks, sampled frame extraction, SSIM, and PSNR.
-- Added native renderer input export in `VideoPipeline.build_native_renderer_input(...)`.
-- Scaffolded Rust crate `spam_audio_video/native_renderers/story_gpu_renderer`.
+- Added native renderer input export for the first prototype branch.
+- Scaffolded the first Rust crate that later became `spam_audio_video/renderers/story_gpu_renderer`.
 - Moved Cargo target output outside source to `D:/cargo-target/story_gpu_renderer`.
 - Removed generated `target/` folder from the source tree.
 

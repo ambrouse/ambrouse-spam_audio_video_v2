@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 
-use crate::{cli::RenderCommand, config::RendererInput, native_story, report::RendererReport};
+use crate::{cli::RenderCommand, config::RendererInput, report::RendererReport, story};
 
 pub fn run_render(command: RenderCommand) -> Result<()> {
     let input = RendererInput::read(&command.config)?;
@@ -12,10 +12,10 @@ pub fn run_render(command: RenderCommand) -> Result<()> {
     }
 
     let started = Instant::now();
-    let encode = native_story::run_native_story_render(&input, &output_path)?;
+    let encode = story::run_story_render(&input, &output_path)?;
     let elapsed = started.elapsed();
     let report =
-        RendererReport::native_candidate(&output_path, elapsed, encode.encoder, encode.notes)?;
+        RendererReport::production_timeline(&output_path, elapsed, encode.encoder, encode.notes)?;
     report.write(&command.report)?;
 
     // Keep full FFmpeg logs next to the requested report for benchmark evidence.

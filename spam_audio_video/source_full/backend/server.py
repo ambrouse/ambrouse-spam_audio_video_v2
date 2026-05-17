@@ -38,6 +38,13 @@ except ImportError:
     from progress_store import ProgressStore
     from video_service import VideoPipelineService
 
+DEFAULT_TTS_INFERENCE_TIMESTEPS = max(
+    4,
+    min(20, int(os.getenv("SPAM_TTS_INFERENCE_TIMESTEPS", "6") or "6")),
+)
+DEFAULT_TTS_RETRY_BADCASE = str(os.getenv("SPAM_TTS_RETRY_BADCASE", "1")).strip().lower() in {"1", "true", "yes", "on"}
+DEFAULT_TTS_CFG_VALUE = max(0.5, min(4.0, float(os.getenv("SPAM_TTS_CFG_VALUE", "2.0") or "2.0")))
+
 
 app = FastAPI(title="Pipeline Controller", version="1.1.0")
 service = AudioPipelineService(REPO_ROOT)
@@ -77,7 +84,9 @@ class PipelineRunRequest(BaseModel):
     top_k: int = 80
     max_chars: int = 420
     tts_io_workers: int = 6
-    inference_timesteps: int = 8
+    inference_timesteps: int = DEFAULT_TTS_INFERENCE_TIMESTEPS
+    retry_badcase: bool = DEFAULT_TTS_RETRY_BADCASE
+    cfg_value: float = DEFAULT_TTS_CFG_VALUE
     postprocess: bool = False
     noise_reduction: float = 0.12
     highpass_hz: float = 70.0
@@ -252,7 +261,9 @@ class RunAllRequest(ConvertFullRunRequest):
     top_k: int = 80
     max_chars_tts: int = 420
     tts_io_workers: int = 6
-    inference_timesteps: int = 8
+    inference_timesteps: int = DEFAULT_TTS_INFERENCE_TIMESTEPS
+    retry_badcase: bool = DEFAULT_TTS_RETRY_BADCASE
+    cfg_value: float = DEFAULT_TTS_CFG_VALUE
     resume_from_checkpoint: bool = False
     video_enabled: bool = True
     video_scene_duration_seconds: float = 30.0
@@ -264,8 +275,8 @@ class RunAllRequest(ConvertFullRunRequest):
     video_gpt_cdp_urls: list[str] | None = None
     video_prompt_workers: int = 9
     video_prompt_delay_seconds: float = 0.6
-    video_width: int = 3840
-    video_height: int = 2160
+    video_width: int = 1920
+    video_height: int = 1080
     video_fps: int = 60
     video_motion_intensity: float = 0.012
     video_gpt_image_limit: int = 10
@@ -276,7 +287,7 @@ class RunAllRequest(ConvertFullRunRequest):
     video_merge_audio: bool = True
     video_output_name: str = "story_render.mp4"
     video_encoder: str = "auto"
-    video_preset: str = "quality"
+    video_preset: str = "throughput"
     video_crf: int = 18
     video_cq: int = 18
     video_render_workers: int = 6
@@ -297,9 +308,9 @@ class VideoPipelineRequest(BaseModel):
     gpt_cdp_urls: list[str] | None = None
     prompt_parallel_workers: int = 1
     prompt_delay_seconds: float = 0.6
-    width: int = 1280
-    height: int = 720
-    fps: int = 24
+    width: int = 1920
+    height: int = 1080
+    fps: int = 60
     motion_intensity: float = 0.06
     sd_executable: str | None = None
     sd_model_path: str | None = None
@@ -316,7 +327,7 @@ class VideoPipelineRequest(BaseModel):
     story_context: str = ""
     gemini_prompt_template: str = ""
     video_encoder: str = "auto"
-    video_preset: str = "quality"
+    video_preset: str = "throughput"
     video_crf: int = 18
     video_cq: int = 18
     render_workers: int = 6
@@ -639,6 +650,8 @@ def run_audio_pipeline(payload: PipelineRunRequest) -> PipelineRunResponse:
             max_chars=payload.max_chars,
             tts_io_workers=payload.tts_io_workers,
             inference_timesteps=payload.inference_timesteps,
+            retry_badcase=payload.retry_badcase,
+            cfg_value=payload.cfg_value,
             postprocess=payload.postprocess,
             noise_reduction=payload.noise_reduction,
             highpass_hz=payload.highpass_hz,
@@ -1132,6 +1145,8 @@ def run_all_pipeline(payload: RunAllRequest) -> dict:
             max_chars=payload.max_chars_tts,
             tts_io_workers=payload.tts_io_workers,
             inference_timesteps=payload.inference_timesteps,
+            retry_badcase=payload.retry_badcase,
+            cfg_value=payload.cfg_value,
         )
         result = {
             "success": bool(tts_result.success),

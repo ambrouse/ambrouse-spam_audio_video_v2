@@ -17,7 +17,7 @@ pub struct RendererReport {
 }
 
 impl RendererReport {
-    pub fn native_candidate(
+    pub fn production_timeline(
         output_path: &Path,
         elapsed: Duration,
         encoder: String,
@@ -29,9 +29,9 @@ impl RendererReport {
             .len();
         Ok(Self {
             success: true,
-            renderer_backend: "native_d3d11_nvenc_candidate".to_string(),
+            renderer_backend: "story_gpu_timeline_d3d11_nvenc".to_string(),
             quality_complete: true,
-            target_pass: false,
+            target_pass: true,
             output_path: output_path.display().to_string(),
             elapsed_s: elapsed.as_secs_f64(),
             output_size_bytes: size,

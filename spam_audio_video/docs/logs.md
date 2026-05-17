@@ -11,6 +11,16 @@
 - Added `.env.example` with GPU-safe defaults and wired `.env` loading for setup/web runtime.
 - Text cleanup/chunk/export now preserve only `.` and `,`; other punctuation is deleted instead of replaced.
 
+## 2026-05-17
+- Video main path moved from segmented clip render/combine to a Rust/D3D11/NVENC full-timeline renderer for 16:9 60fps h264_nvenc outputs.
+- FFmpeg remains in the main path only for MP4 remux/final audio mux; the image motion, overlay, visualizer, and timeline transitions are shader-native.
+- 3-minute 4K60 with-audio validation completed in `94.291s` total video stage, with `87.908s` in story timeline render and about `421 MB` renderer peak working set.
+- Fast HD profile added: web/backend defaults now target `1080p60`, story renderer throughput maps to NVENC `p1`, bitrate scales per resolution, and a 3-minute 1080p60 with-audio validation completed in `23.305s` total video stage.
+- Native visual polish changed audio bars to circular two-side dot clusters and changed dust/spark overlays to vertical-only soft circular particles; 3-minute 1080p60 validation completed in `22.701s`.
+- Audio aggressive profile added: VoxCPM now uses inference-mode/TF32 runtime hints, defaults to `6` inference steps with `retry_badcase_max_times=1`, and streams final WAV merge to keep RAM stable on long runs. Full current-session audio improved from `1114.424s` to `1102.582s`; speed gain is small because model inference dominates.
+- Video cleanup completed: the main `render_video()` path now only uses the production Rust/D3D11/NVENC full-timeline renderer, old segmented clip/FFmpeg combine fallback code was removed, and a fresh 3-minute 1080p60 with-audio validation completed in `22.623s`.
+- Long-run stability guard added: CI now checks audio merge stays streaming, old segmented video tokens stay out of runtime source, and Windows builds/tests the Rust story renderer.
+
 ## 2026-05-01
 - Phase 1: safe stop/emergency stop, run-all, logs + knowledge APIs, frontend controls.
 - Phase 2: parallel rewrite config, chrome pool open/close, frontend pool controls.
@@ -28,7 +38,7 @@
 - Phase 12: added session-first video pipeline core in `auto_generate_video` (analyze/prompt/image/render/merge/full-run).
 - Phase 13: added backend `VideoPipelineService` and FastAPI endpoints `/api/pipeline/video/*` with job progress integration.
 - Phase 14: added in-project frontend `Video` page with controls for timing, prompt provider, SD runtime config, render, and merge.
-- Phase 15: session artifact contract updated so each session includes `video/` subtree and downloadable `story_silent.mp4` + `final_story.mp4` at session video root.
+- Phase 15: session artifact contract originally exposed legacy silent/final filenames; current production releases use `story_render*.mp4` and `story_render*_with_audio.mp4`.
 - Phase 16: runtime hardening added for missing `combined.wav` (duration/merge fallback from per-file wavs) and fake-mode placeholder image generation for smoke tests when SD runtime is not yet configured.
 - Phase 17: video runtime fix pack for production use: placeholder images are now opt-in only (`VIDEO_ALLOW_PLACEHOLDER=1`), Gemini image-prompt sanitization improved (handles `Prompt:`/`Final prompt:` wrappers), render camera zoom motion slowed down 5x, and render stage now also exports an audio-attached video variant (`*_with_audio.mp4`).
 - Phase 18: rewrite runtime now supports OpenAI-compatible endpoint mode (`provider=openai_compat`) with defaults `http://localhost:20128/v1` + `gemini/gemini-3-flash-preview`; backend/frontend defaults switched away from Chrome CDP for rewrite flow.

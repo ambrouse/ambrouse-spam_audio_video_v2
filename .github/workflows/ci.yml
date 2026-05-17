@@ -33,9 +33,34 @@ jobs:
           python -m py_compile \
             auto_convert_text/pipeline/audio_cleaner.py \
             auto_convert_text/pipeline/simple_chunker.py \
+            auto_generate_video/pipeline.py \
             source_full/backend/pipeline_service.py \
+            source_full/backend/server.py \
             auto_text_to_voice/vieneu_worker.py \
-            tools/benchmark_tts_pipeline.py
+            tools/benchmark_tts_pipeline.py \
+            tools/benchmark_4k60_render.py \
+            tools/benchmark_end_to_end_30s.py
 
       - name: Run policy unit tests
         run: python -m unittest discover -s tests
+
+  story-renderer:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: spam_audio_video/renderers/story_gpu_renderer
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check renderer formatting
+        run: cargo fmt --check
+
+      - name: Build renderer
+        run: cargo build --release
+
+      - name: Test renderer crate
+        run: cargo test --release

@@ -29,10 +29,10 @@ Current implementation focuses on `auto_text_to_voice` stage in the full future 
 - `auto_generate_video/pipeline.py`
   - Computes scene count from session audio duration and configurable seconds-per-image.
   - Groups `tts_inputs/*.txt` into scene buckets.
-  - Generates scene prompts (fake or Gemini web).
-  - Generates scene images (SD GGUF local runtime, fake-mode placeholder fallback for smoke test).
-  - Renders subtle camera-motion silent video.
-  - Merges session audio into final video output.
+  - Generates scene prompts through the configured URL-compatible provider.
+  - Generates scene images through the configured SD runtime.
+  - Renders the full timeline through the production Rust/D3D11/NVENC story renderer.
+  - Muxes session audio into the final video output after the story render completes.
 
 - `source_full/backend/video_service.py`
   - Service orchestration and shared registry updates for video stages.
@@ -49,7 +49,7 @@ Current implementation focuses on `auto_text_to_voice` stage in the full future 
 
 - `projects_workspace/projects/<project_id>/sessions/<session_id>/video/`
   - `prompts/`, `images/`, `renders/`, `final/`, `manifests/`
-  - Root keeps downloadable outputs: `story_silent.mp4`, `final_story.mp4`
+  - Root keeps downloadable story-render outputs such as `story_render*.mp4` and `story_render*_with_audio.mp4`.
 
 ## Extension direction
 - Keep API contract stable and add staged endpoints:

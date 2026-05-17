@@ -33,10 +33,13 @@ Local validation passed on 2026-05-17:
 | Extracted release bridge batch tests | Pass, 9 tests |
 | Extracted release GPU check | Pass, CUDA torch + `h264_nvenc` |
 
-Benchmark report:
+The generated benchmark report was removed from source during the `v0.1.6`
+cleanup. Regenerate it locally with setup production validation when preparing
+a release:
 
-```text
-spam_audio_video/benchmarks/setup_validation/20260517_055214_setup_validation_tts/reports/summary.md
+```bash
+cd spam_audio_video
+bash setup.sh --install-only --yes --production-validate --tts-device cuda
 ```
 
 Observed validation WAV: 3.924s, peak -6.06 dBFS, RMS -18.78 dBFS,

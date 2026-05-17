@@ -8,13 +8,13 @@ installing Python or Node.
 ## Build
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.4
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.6
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.4-win64.zip
+dist/ambrouse-studio-v0.1.6-win64.zip
 ```
 
 ## Runtime Entry Points
@@ -36,8 +36,8 @@ starts the browser bridge, then starts Story Pipeline Studio.
 - source code for `toll-brouser-gpt-gemini`.
 - portable Python runtime.
 - portable Node runtime.
-- native GPU story renderer binary at
-  `spam_audio_video/native_renderers/story_gpu_renderer/target/release/story_gpu_renderer.exe`.
+- production story renderer binary at
+  `spam_audio_video/renderers/story_gpu_renderer/target/release/story_gpu_renderer.exe`.
 - launcher scripts.
 - GPU-safe `.env` defaults.
 
@@ -48,12 +48,12 @@ starts the browser bridge, then starts Story Pipeline Studio.
 - first-time Gemini/GPT login in the browser profiles.
 - model downloads/cache unless a full offline bundle is built separately.
 
-## Native Renderer
+## Story Renderer
 
-`v0.1.4` packages the Rust/D3D11/NVENC renderer binary so the video pipeline can
-use the fast native path on fresh machines without installing Rust. The renderer
-is selected automatically for 16:9 `60fps` H.264/NVENC outputs. Set
-`SPAM_VIDEO_NATIVE_GPU_RENDER=off` to force the FFmpeg fallback for debugging.
+`v0.1.6` packages the Rust/D3D11/NVENC renderer binary so the video pipeline can
+use the production full-timeline path on fresh machines without installing
+Rust. The renderer is required for 16:9 `60fps` H.264/NVENC outputs; the main
+pipeline no longer falls back to the old segmented FFmpeg render path.
 
 ## Bridge Port Scheduling
 

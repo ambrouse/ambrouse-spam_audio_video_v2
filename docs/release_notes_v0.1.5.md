@@ -1,5 +1,8 @@
 # Release Notes - v0.1.5
 
+Superseded by `v0.1.6`, which removed the multi-clip combine/fallback path and
+ships only the production Rust/D3D11/NVENC story timeline renderer.
+
 ## Highlights
 
 - Fixed native 4K60 audio visualizer renders near the end of a timeline when a

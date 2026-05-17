@@ -1,5 +1,9 @@
 # 2026-05-17 Native Main Pipeline Release
 
+Status: superseded by `v0.1.6`, where the accepted Rust/D3D11/NVENC story
+renderer became the only production video path and the old fallback/clip cache
+contract was removed.
+
 ## Scope
 
 - Move the accepted Rust/D3D11/NVENC renderer into the main video pipeline.
@@ -8,12 +12,12 @@
 
 ## Code Changes
 
-- `VideoPipeline.render_video(...)` now selects the native renderer
-  automatically for 16:9 `60fps` `h264_nvenc` outputs.
-- FFmpeg remains available as fallback when native is disabled, unavailable, or
-  the output contract is unsupported.
-- Native clip cache folders include resolution/FPS and audio-visualizer state to
-  prevent stale clip reuse.
+- `VideoPipeline.render_video(...)` selected the native renderer
+  automatically for 16:9 `60fps` `h264_nvenc` outputs in this release.
+- This fallback-based contract was removed in `v0.1.6`; production now fails
+  fast unless the Rust/D3D11/NVENC story renderer can run.
+- Native clip cache folders included resolution/FPS and audio-visualizer state
+  in this historical release. The clip cache path was removed in `v0.1.6`.
 - Native renderer input now carries `audio_start_seconds` for correct
   per-clip audio visualizer timing.
 - Native audio visualizer bars are wider separated into left/right clusters.
@@ -46,5 +50,5 @@
 
 - Release asset: `dist/ambrouse-studio-v0.1.4-win64.zip`.
 - Extracted validation folder: `dist/release_validate_v014`.
-- Native binary is packaged at
-  `spam_audio_video/native_renderers/story_gpu_renderer/target/release/story_gpu_renderer.exe`.
+- Current native binary is packaged from
+  `spam_audio_video/renderers/story_gpu_renderer/target/release/story_gpu_renderer.exe`.

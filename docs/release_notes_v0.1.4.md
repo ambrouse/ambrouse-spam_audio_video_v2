@@ -1,5 +1,9 @@
 # Release Notes - v0.1.4
 
+Superseded by `v0.1.6`, which removed the fallback-based segmented video path
+and uses the Rust/D3D11/NVENC story renderer as the only production video
+renderer.
+
 ## Highlights
 
 - Promoted the Rust/D3D11/NVENC story renderer into the main video pipeline for

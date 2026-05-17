@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "v0.1.4",
+  [string]$Version = "v0.1.6",
   [string]$PythonVersion = "3.12.7",
   [string]$NodeVersion = "22.13.1",
   [switch]$SkipRuntimeDownload
@@ -49,12 +49,12 @@ function Copy-Tree($Source, $Target, [string[]]$ExcludeDirs = @(), [string[]]$Ex
   }
 }
 
-function Ensure-NativeRenderer($BuildRoot) {
-  $RendererRoot = Join-Path $RepoRoot "spam_audio_video\native_renderers\story_gpu_renderer"
+function Ensure-StoryRenderer($BuildRoot) {
+  $RendererRoot = Join-Path $RepoRoot "spam_audio_video\renderers\story_gpu_renderer"
   $ExeName = "story_gpu_renderer.exe"
   $Cargo = Get-Command cargo -ErrorAction SilentlyContinue
   if ($Cargo) {
-    Step "Building native GPU renderer"
+    Step "Building production story renderer"
     Push-Location $RendererRoot
     try {
       & $Cargo.Source build --release
@@ -65,7 +65,7 @@ function Ensure-NativeRenderer($BuildRoot) {
       Pop-Location
     }
   } else {
-    Write-Host "[portable][warn] cargo not found; trying to package an existing native renderer binary." -ForegroundColor Yellow
+    Write-Host "[portable][warn] cargo not found; trying to package an existing story renderer binary." -ForegroundColor Yellow
   }
 
   $Candidates = @(
@@ -80,10 +80,10 @@ function Ensure-NativeRenderer($BuildRoot) {
     }
   }
   if (!$SourceExe) {
-    throw "Native renderer binary not found. Install Rust/Cargo or build spam_audio_video/native_renderers/story_gpu_renderer first."
+    throw "Story renderer binary not found. Install Rust/Cargo or build spam_audio_video/renderers/story_gpu_renderer first."
   }
 
-  $TargetDir = Join-Path $BuildRoot "spam_audio_video\native_renderers\story_gpu_renderer\target\release"
+  $TargetDir = Join-Path $BuildRoot "spam_audio_video\renderers\story_gpu_renderer\target\release"
   New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
   Copy-Item -LiteralPath $SourceExe -Destination (Join-Path $TargetDir $ExeName) -Force
 }
@@ -103,7 +103,7 @@ Copy-Tree (Join-Path $RepoRoot "toll-brouser-gpt-gemini") (Join-Path $BuildRoot 
   -ExcludeFiles @(".env", "*.pyc", "*.pyo", "*.log")
 
 Copy-Tree (Join-Path $RepoRoot "scripts\portable\runtime") $BuildRoot
-Ensure-NativeRenderer $BuildRoot
+Ensure-StoryRenderer $BuildRoot
 
 Step "Writing default .env files"
 Copy-Item (Join-Path $BuildRoot "spam_audio_video\.env.example") (Join-Path $BuildRoot "spam_audio_video\.env") -Force

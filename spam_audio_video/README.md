@@ -9,7 +9,7 @@
   <img src="https://img.shields.io/badge/FastAPI-0.115+-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
   <img src="https://img.shields.io/badge/UI-HTML%2FCSS%2FJS-0f172a?style=for-the-badge&logo=javascript&logoColor=f7df1e" alt="UI" />
-  <img src="https://img.shields.io/badge/Stage-Convert%20%2B%20Audio-1d4ed8?style=for-the-badge" alt="Stage" />
+  <img src="https://img.shields.io/badge/Stage-Text%20%2B%20Audio%20%2B%20Video-1d4ed8?style=for-the-badge" alt="Stage" />
   <img src="https://img.shields.io/badge/Runtime-Tested-16a34a?style=for-the-badge" alt="Runtime Tested" />
 </p>
 
@@ -73,7 +73,7 @@ prepare the TTS model, then start the web app.
 ### GPU defaults
 - Fresh clone does not need a `.env` file to choose GPU. `setup.sh` defaults to `SETUP_TTS_DEVICE=auto` and switches to CUDA PyTorch when `nvidia-smi` is available.
 - Runtime audio defaults to `SPAM_TTS_DEVICE=cuda`. If the TTS venv still has CPU-only PyTorch, the job fails with a clear CUDA error instead of silently running on CPU.
-- Video render is GPU-only in the production path. `auto` selects `h264_nvenc`, `h264_qsv`, or `h264_amf`; `libx264`/CPU is blocked.
+- Video render is GPU-only in the production path. The main pipeline requires the production Rust/D3D11/NVENC story renderer for 16:9 `60fps` `h264_nvenc` output; `libx264`/CPU and the old segmented clip path are blocked.
 - Copy `.env.example` to `.env` only when you want explicit local settings such as port, bridge URL, or fixed model paths.
 
 ### First-run requirements
@@ -99,8 +99,8 @@ prepare the TTS model, then start the web app.
 ## Project Flow
 
 ```text
-auto_convert_text                       -> auto_text_to_voice -> auto_generate_video
-(collect/rewrite per chapter/clean/chunk)  (production stage)
+auto_convert_text -> auto_text_to_voice -> auto_generate_video -> renderers/story_gpu_renderer
+(collect/rewrite/clean/chunk)             (VoxCPM audio)         (single full-timeline video pass)
 ```
 
 ## Project Center
@@ -148,8 +148,8 @@ TXT Inputs (*.txt)
 - Session video root: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/`
 - Session video prompts: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/prompts/*.prompt.txt`
 - Session video images: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/images/*.png`
-- Session rendered video: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/story_silent.mp4`
-- Session final merged video: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/final_story.mp4`
+- Session rendered video: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/story_render.mp4`
+- Session audio-attached video: `projects_workspace/projects/<project_id>/sessions/<session_id>/video/story_render_with_audio.mp4`
 - Legacy manual TTS text: `auto_text_to_voice/text/*.txt`
 - Shared project registry: `project_registry/projects.json`
 - Voice profiles: `auto_text_to_voice/voice/<profile_name>/`

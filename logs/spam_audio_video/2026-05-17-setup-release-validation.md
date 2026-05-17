@@ -45,11 +45,10 @@ cmd /c CHECK_GPU.bat
 | Extracted release setup validation | Pass: peak `-6.13 dBFS`, RMS `-18.43 dBFS` |
 | Extracted release GPU check | Pass: CUDA torch available, encoder `h264_nvenc` |
 
-Latest production validation report:
-
-```text
-spam_audio_video/benchmarks/setup_validation/20260517_055214_setup_validation_tts/reports/summary.md
-```
+Generated setup-validation reports are now ignored and were removed from
+source during the `v0.1.6` cleanup. Regenerate them locally with
+`bash setup.sh --install-only --yes --production-validate --tts-device cuda`
+when validating a fresh machine.
 
 ## Notes
 

@@ -38,30 +38,26 @@
 Use this when you want the most stable "download, extract, run" build.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.5
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.6
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.5-win64.zip
+dist/ambrouse-studio-v0.1.6-win64.zip
 ```
 
 User flow:
 
-1. Download `ambrouse-studio-v0.1.5-win64.zip` from GitHub Releases.
+1. Download `ambrouse-studio-v0.1.6-win64.zip` from GitHub Releases.
 2. Extract it to a normal folder, for example `D:\AmbrouseStudio`.
 3. Run `RUN.bat`.
 4. Open `http://127.0.0.1:8080`.
 5. In the Bridge tab, open/ping ports and login Gemini/GPT once.
 
-The portable zip includes Python, Node, and the native GPU story renderer binary, so users do not need to install Python, Node, or Rust manually. NVIDIA driver and Chrome/Gemini/GPT login are still machine-specific and must exist on the target PC.
+The portable zip includes Python, Node, and the production Rust/D3D11/NVENC story renderer binary, so users do not need to install Python, Node, or Rust manually. NVIDIA driver and Chrome/Gemini/GPT login are still machine-specific and must exist on the target PC.
 
-Need manual input from you before final release:
-
-- send the README banner image; recommended target path: `docs/assets/readme-banner.png`.
-- pick the release version, for example `v0.1.5`.
-- decide whether release is standard portable or a very large full/offline model bundle.
+`v0.1.6` is the clean production pipeline release: the old segmented video clip path is removed from the main source, audio merge is streaming for long jobs, and CI validates both Python policy tests and the Windows Rust renderer build.
 
 ---
 
@@ -97,6 +93,10 @@ chapters urls
 browser/tab automation (Gemini/GPT)
   -> toll-brouser-gpt-gemini/examples/apps/gemini-use/server.py
      (CDP session + chat/image endpoints)
+
+video production
+  -> spam_audio_video/renderers/story_gpu_renderer
+     (single Rust/D3D11/NVENC full-timeline render + final audio mux)
 ```
 
 ---
@@ -214,9 +214,11 @@ curl http://127.0.0.1:8080/api/health
 
 Primary docs from story pipeline:
 
+- `docs/release_notes_v0.1.6.md`
 - `docs/release_notes_v0.1.5.md`
 - `docs/setup_release_validation_2026-05-17.md`
 - `docs/portable_windows_release.md`
+- `docs/native_full_timeline_2026-05-17.md`
 - `spam_audio_video/docs/gpu_runtime_2026-05-14.md`
 - `spam_audio_video/docs/architecture_audio_pipeline.md`
 - `spam_audio_video/docs/architecture_auto_convert_text.md`

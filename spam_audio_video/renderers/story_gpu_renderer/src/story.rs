@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     ffi::CString,
     fs::File,
     io::{BufWriter, Read, Seek, SeekFrom, Write},
@@ -17,7 +18,7 @@ use nvenc::{
         enums::{
             NVencBufferFormat, NVencParamsRcMode, NVencPicStruct, NVencPicType, NVencTuningInfo,
         },
-        guids::{NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P3_GUID},
+        guids::{NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P1_GUID, NV_ENC_PRESET_P3_GUID},
     },
 };
 use windows::core::PCSTR;
@@ -50,7 +51,7 @@ use windows::Win32::{
 
 use crate::config::RendererInput;
 
-pub struct NativeStoryResult {
+pub struct StoryRenderResult {
     pub encoder: String,
     pub stdout: String,
     pub stderr: String,
@@ -76,6 +77,11 @@ struct TextureLayer {
     srv: ID3D11ShaderResourceView,
 }
 
+struct SceneLayer {
+    background: TextureLayer,
+    foreground: TextureLayer,
+}
+
 struct ShaderRenderer {
     vertex_shader: ID3D11VertexShader,
     pixel_shader: ID3D11PixelShader,
@@ -95,13 +101,9 @@ struct OutputTarget {
 struct OverlayParticle {
     x0: f32,
     y0: f32,
-    width: f32,
-    height: f32,
+    size: f32,
     speed: f32,
     rise: bool,
-    sway: f32,
-    phase: f32,
-    offset: f32,
     color: [f32; 4],
 }
 
@@ -116,35 +118,63 @@ struct AudioBars {
     color: [f32; 4],
 }
 
-pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<NativeStoryResult> {
+pub fn run_story_render(input: &RendererInput, output: &Path) -> Result<StoryRenderResult> {
     let width = input.video.width.max(16);
     let height = input.video.height.max(16);
     let fps = input.video.fps.max(1);
     let duration_s = input.video.duration_seconds.max(0.1);
     let frames = (duration_s * f64::from(fps)).ceil() as u64;
-    let image_path = input
-        .assets
-        .images
-        .first()
-        .context("native renderer requires at least one image")?;
+    anyhow::ensure!(
+        !input.assets.images.is_empty(),
+        "story renderer requires at least one image"
+    );
 
     let prepare_started = Instant::now();
-    let source = load_rgba(image_path)?;
-    let background = build_background(&source, width, height);
+    let d3d = create_d3d11_context()?;
+    let side_pad = input.layout.side_pad.max(60).min(width / 3);
+    let panel_width = input
+        .layout
+        .panel_width
+        .max(320)
+        .min(width.saturating_sub(side_pad * 2).max(320));
+    let panel_height = input.layout.panel_height.max(320).min(height);
+    let scroll_zoom = input.layout.scroll_zoom.max(1.0).min(1.8);
+    let mut scene_layers: Vec<SceneLayer> = Vec::new();
+    let mut scene_lookup: HashMap<PathBuf, usize> = HashMap::new();
+    let mut scene_sequence: Vec<usize> = Vec::with_capacity(input.assets.images.len());
+    for image_path in &input.assets.images {
+        let key = image_path.clone();
+        if let Some(index) = scene_lookup.get(&key) {
+            scene_sequence.push(*index);
+            continue;
+        }
+        let source = load_rgba(image_path)?;
+        let background = build_background(&source, width, height);
+        let foreground_scaled =
+            build_foreground_scaled(&source, panel_width, panel_height, scroll_zoom);
+        let bg_layer = create_texture_layer(&d3d.device, &background)?;
+        let fg_layer = create_texture_layer(&d3d.device, &foreground_scaled)?;
+        let layer_index = scene_layers.len();
+        scene_layers.push(SceneLayer {
+            background: bg_layer,
+            foreground: fg_layer,
+        });
+        scene_lookup.insert(key, layer_index);
+        scene_sequence.push(layer_index);
+    }
     let logo = match &input.assets.logo_path {
         Some(path) if !path.as_os_str().is_empty() && path.exists() => Some(load_rgba(path)?),
         _ => None,
     };
     let notes = vec![
-        "Native renderer draws scene imagery, particles, logo, audio visualizer bars, and encodes through D3D11/NVENC.".to_string(),
-        "Final visual overlay is shader-native for the single-scene 4K60 production path.".to_string(),
+        "Story renderer draws scene imagery, particles, logo, audio visualizer bars, and encodes through D3D11/NVENC.".to_string(),
+        "Full timeline composition, dissolve transitions, visual overlays, and NVENC encode happen in one render pass.".to_string(),
     ];
 
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let raw_h264 = output.with_extension("native_candidate.h264");
-    let d3d = create_d3d11_context()?;
+    let raw_h264 = output.with_extension("story_timeline.h264");
     let renderer = ShaderRenderer::new(&d3d.device, width, height)
         .context("failed to initialize D3D11 shader renderer")?;
 
@@ -157,22 +187,45 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
             .contains(&NV_ENC_CODEC_H264_GUID),
         "NVENC H.264 codec is not available"
     );
+    let preset_guid = if wants_throughput_preset(&input.video.preset) {
+        NV_ENC_PRESET_P1_GUID
+    } else {
+        NV_ENC_PRESET_P3_GUID
+    };
+    let preset_name = if preset_guid == NV_ENC_PRESET_P1_GUID {
+        "p1"
+    } else {
+        "p3"
+    };
+    let available_presets = session
+        .get_encode_presets(NV_ENC_CODEC_H264_GUID)
+        .map_err(|err| anyhow!("failed to list NVENC presets: {:?}", err))?;
+    let selected_preset_guid = if available_presets.contains(&preset_guid) {
+        preset_guid
+    } else {
+        NV_ENC_PRESET_P3_GUID
+    };
+    let selected_preset_name = if selected_preset_guid == NV_ENC_PRESET_P1_GUID {
+        "p1"
+    } else {
+        "p3"
+    };
     let (session, mut config) = session
         .get_encode_preset_config_ex(
             NV_ENC_CODEC_H264_GUID,
-            NV_ENC_PRESET_P3_GUID,
+            selected_preset_guid.clone(),
             NVencTuningInfo::LowLatency,
         )
         .map_err(|err| anyhow!("failed to get NVENC preset config: {:?}", err))?;
     config.preset_cfg.rc_params.rate_control_mode = NVencParamsRcMode::VBR;
     let requested_cq = input.video.cq.clamp(12, 30);
-    let average_bit_rate = 18_000_000 + u32::from(18_u8.saturating_sub(requested_cq)) * 1_000_000;
+    let average_bit_rate = production_average_bitrate(width, height, requested_cq);
     config.preset_cfg.rc_params.average_bit_rate = average_bit_rate;
     config.preset_cfg.gop_len = fps * 2;
     config.preset_cfg.frame_interval_p = 1;
     let init_params = InitParams {
         encode_guid: NV_ENC_CODEC_H264_GUID,
-        preset_guid: NV_ENC_PRESET_P3_GUID,
+        preset_guid: selected_preset_guid,
         aspect_ratio: [16, 9],
         encode_config: &mut config.preset_cfg,
         tuning_info: NVencTuningInfo::LowLatency,
@@ -185,7 +238,7 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
     let encoder = session
         .init_encoder(init_params)
         .map_err(|err| anyhow!("failed to initialize NVENC encoder: {:?}", err))?;
-    let encode_depth = std::env::var("SPAM_NATIVE_NVENC_PIPELINE_DEPTH")
+    let encode_depth = std::env::var("SPAM_VIDEO_NVENC_PIPELINE_DEPTH")
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
         .unwrap_or(3)
@@ -209,19 +262,7 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
     }
 
     let mut raw_writer = BufWriter::new(File::create(&raw_h264)?);
-    let side_pad = input.layout.side_pad.max(60).min(width / 3);
-    let panel_width = input
-        .layout
-        .panel_width
-        .max(320)
-        .min(width.saturating_sub(side_pad * 2).max(320));
-    let panel_height = input.layout.panel_height.max(320).min(height);
-    let scroll_zoom = input.layout.scroll_zoom.max(1.0).min(1.8);
-    let foreground_scaled =
-        build_foreground_scaled(&source, panel_width, panel_height, scroll_zoom);
-    let bg_layer = create_texture_layer(&d3d.device, &background)?;
-    let fg_layer = create_texture_layer(&d3d.device, &foreground_scaled)?;
-    let white_layer = create_solid_texture_layer(&d3d.device, [255, 255, 255, 255])?;
+    let circle_layer = create_soft_circle_texture_layer(&d3d.device, 32)?;
     let logo_layer = match &logo {
         Some(logo_image) => Some(create_texture_layer(
             &d3d.device,
@@ -238,8 +279,26 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
             write_bitstream(&bitstreams[slot], &mut raw_writer)?;
         }
         let frame_time = frame_idx as f64 / f64::from(fps);
-        let progress = production_scroll_y(input, frame_time);
-        renderer.draw_story_frame(
+        let timeline_scene = timeline_scene_at(
+            frame_time,
+            input.video.per_scene_duration_seconds,
+            input.video.transition_seconds,
+            scene_sequence.len(),
+        );
+        let current_layer = &scene_layers[scene_sequence[timeline_scene.current_index]];
+        let next_layer = timeline_scene
+            .next_index
+            .map(|index| &scene_layers[scene_sequence[index]]);
+        let current_progress = production_scroll_y(
+            input,
+            timeline_scene.current_local_time,
+            timeline_scene.current_index,
+        );
+        let next_progress = timeline_scene
+            .next_index
+            .map(|index| production_scroll_y(input, timeline_scene.next_local_time, index))
+            .unwrap_or(0.0);
+        renderer.draw_timeline_frame(
             &d3d.context,
             &output_targets[slot].rtv,
             width,
@@ -247,15 +306,17 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
             side_pad,
             panel_width,
             panel_height,
-            progress,
-            &bg_layer,
-            &fg_layer,
+            current_progress,
+            current_layer,
+            next_layer,
+            next_progress,
+            timeline_scene.next_alpha,
             if visual_plan.logo_enabled {
                 logo_layer.as_ref()
             } else {
                 None
             },
-            &white_layer,
+            &circle_layer,
             &visual_plan,
             frame_idx as usize,
             frame_time as f32,
@@ -296,7 +357,9 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
 
     let mut final_notes = notes;
     final_notes.push(format!(
-        "Prepared source layers in {:.3}s.",
+        "Prepared {} unique scene layers from {} timeline scenes in {:.3}s.",
+        scene_layers.len(),
+        scene_sequence.len(),
         prepare_elapsed_s
     ));
     final_notes.push(format!(
@@ -304,7 +367,7 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
         frames, render_encode_elapsed_s
     ));
     final_notes.push(format!(
-        "Remuxed native H.264 to MP4 in {:.3}s.",
+        "Remuxed story H.264 to MP4 in {:.3}s.",
         remux_elapsed_s
     ));
     final_notes.push(format!(
@@ -312,34 +375,99 @@ pub fn run_native_story_render(input: &RendererInput, output: &Path) -> Result<N
         encode_depth
     ));
     final_notes.push(format!(
-        "Requested preset={} cq={} mapped to native average_bit_rate={}.",
-        input.video.preset, input.video.cq, average_bit_rate
+        "Requested preset={} cq={} mapped to renderer preset={} average_bit_rate={} (initial target {}).",
+        input.video.preset, input.video.cq, selected_preset_name, average_bit_rate, preset_name
     ));
     final_notes.push(
         "Per-frame image composition, particles, logo, and audio visualizer are drawn with D3D11 shader quads."
             .to_string(),
     );
     final_notes.push(format!(
-        "Native visual overlay: particles={}, logo={}, audio_visualizer={}.",
+        "Story visual overlay: particles={}, logo={}, audio_visualizer={}.",
         visual_plan.particles.len(),
         visual_plan.logo_enabled && logo_layer.is_some(),
         visual_plan.audio_bars.is_some()
     ));
-    Ok(NativeStoryResult {
-        encoder: "h264_nvenc_native_d3d11".to_string(),
+    Ok(StoryRenderResult {
+        encoder: "h264_nvenc_d3d11_story".to_string(),
         stdout: String::new(),
         stderr: String::new(),
         notes: final_notes,
     })
 }
 
-fn production_scroll_y(input: &RendererInput, frame_time: f64) -> f64 {
+struct TimelineScene {
+    current_index: usize,
+    next_index: Option<usize>,
+    current_local_time: f64,
+    next_local_time: f64,
+    next_alpha: f32,
+}
+
+fn timeline_scene_at(
+    frame_time: f64,
+    per_scene_duration: f64,
+    transition_seconds: f64,
+    scene_count: usize,
+) -> TimelineScene {
+    let scene_count = scene_count.max(1);
+    let per_scene = per_scene_duration.max(1.0);
+    let transition = transition_seconds.max(0.0).min(per_scene * 0.5);
+    let stride = (per_scene - transition).max(0.001);
+    let current_index = ((frame_time / stride).floor() as usize).min(scene_count - 1);
+    let current_start = current_index as f64 * stride;
+    let next_index = if current_index + 1 < scene_count {
+        Some(current_index + 1)
+    } else {
+        None
+    };
+    let next_start = (current_index + 1) as f64 * stride;
+    let next_alpha = if next_index.is_some() && transition > 0.0 && frame_time >= next_start {
+        ((frame_time - next_start) / transition).clamp(0.0, 1.0) as f32
+    } else {
+        0.0
+    };
+    TimelineScene {
+        current_index,
+        next_index,
+        current_local_time: (frame_time - current_start).max(0.0),
+        next_local_time: (frame_time - next_start).max(0.0),
+        next_alpha,
+    }
+}
+
+fn production_scroll_y(input: &RendererInput, frame_time: f64, scene_index: usize) -> f64 {
     let duration = input.video.per_scene_duration_seconds.max(1.0);
     let scroll_period = duration.mul_add(1.0 / 0.47, 0.0).clamp(28.8, 37.2);
     let scroll_amplitude = (input.layout.vertical_travel * 0.62).clamp(0.34, 0.46);
-    let phase = -std::f64::consts::FRAC_PI_2;
+    let phase = if scene_index % 2 == 0 {
+        -std::f64::consts::FRAC_PI_2
+    } else {
+        std::f64::consts::FRAC_PI_2
+    };
     (0.50 + scroll_amplitude * ((std::f64::consts::TAU * frame_time / scroll_period) + phase).sin())
         .clamp(0.0, 1.0)
+}
+
+fn wants_throughput_preset(raw: &str) -> bool {
+    matches!(
+        raw.trim().to_ascii_lowercase().as_str(),
+        "fast" | "faster" | "throughput" | "speed" | "p1"
+    )
+}
+
+fn production_average_bitrate(width: u32, height: u32, requested_cq: u8) -> u32 {
+    let base_4k = 18_000_000 + u32::from(18_u8.saturating_sub(requested_cq)) * 1_000_000;
+    let pixels = u64::from(width.max(1)) * u64::from(height.max(1));
+    let scaled = (u64::from(base_4k) * pixels / 8_294_400).max(1) as u32;
+    let floor = if width >= 3840 || height >= 2160 {
+        18_000_000
+    } else if width >= 1920 || height >= 1080 {
+        8_000_000
+    } else {
+        5_000_000
+    };
+    scaled.max(floor)
 }
 
 fn load_rgba(path: &Path) -> Result<RgbaImage> {
@@ -350,8 +478,9 @@ fn load_rgba(path: &Path) -> Result<RgbaImage> {
 }
 
 fn build_background(source: &RgbaImage, width: u32, height: u32) -> RgbaImage {
-    let cover = resize_cover(source, width, height);
-    let blurred = imageops::blur(&cover, 18.0);
+    let cover = resize_cover_with_filter(source, width, height, imageops::FilterType::Triangle);
+    let blur_radius = (width.max(height) as f32 / 120.0).clamp(9.0, 18.0);
+    let blurred = imageops::blur(&cover, blur_radius);
     let mut output = RgbaImage::new(width, height);
     for (x, y, pixel) in output.enumerate_pixels_mut() {
         let p = blurred.get_pixel(x, y);
@@ -371,7 +500,7 @@ fn build_foreground_scaled(
 ) -> RgbaImage {
     let target_w = ((panel_width as f64 * zoom).round() as u32).max(panel_width);
     let target_h = ((panel_height as f64 * zoom).round() as u32).max(panel_height);
-    resize_cover(source, target_w, target_h)
+    resize_cover_with_filter(source, target_w, target_h, imageops::FilterType::CatmullRom)
 }
 
 fn resize_logo_for_layout(logo: &RgbaImage, video_width: u32, side_pad: u32) -> RgbaImage {
@@ -386,12 +515,17 @@ fn resize_logo_for_layout(logo: &RgbaImage, video_width: u32, side_pad: u32) -> 
     )
 }
 
-fn resize_cover(source: &RgbaImage, width: u32, height: u32) -> RgbaImage {
+fn resize_cover_with_filter(
+    source: &RgbaImage,
+    width: u32,
+    height: u32,
+    filter: imageops::FilterType,
+) -> RgbaImage {
     let scale = (width as f64 / source.width().max(1) as f64)
         .max(height as f64 / source.height().max(1) as f64);
     let scaled_w = ((source.width() as f64 * scale).ceil() as u32).max(width);
     let scaled_h = ((source.height() as f64 * scale).ceil() as u32).max(height);
-    let resized = imageops::resize(source, scaled_w, scaled_h, imageops::FilterType::Lanczos3);
+    let resized = imageops::resize(source, scaled_w, scaled_h, filter);
     let x = scaled_w.saturating_sub(width) / 2;
     let y = scaled_h.saturating_sub(height) / 2;
     imageops::crop_imm(&resized, x, y, width, height).to_image()
@@ -482,8 +616,26 @@ fn create_texture_layer(device: &ID3D11Device, image: &RgbaImage) -> Result<Text
     })
 }
 
-fn create_solid_texture_layer(device: &ID3D11Device, rgba: [u8; 4]) -> Result<TextureLayer> {
-    let image = RgbaImage::from_pixel(1, 1, Rgba(rgba));
+fn create_soft_circle_texture_layer(device: &ID3D11Device, size: u32) -> Result<TextureLayer> {
+    let size = size.clamp(16, 96);
+    let radius = (size as f32 - 1.0) * 0.5;
+    let center = radius;
+    let mut image = RgbaImage::new(size, size);
+    for y in 0..size {
+        for x in 0..size {
+            let dx = x as f32 - center;
+            let dy = y as f32 - center;
+            let dist = (dx * dx + dy * dy).sqrt() / radius.max(1.0);
+            let alpha = if dist <= 0.72 {
+                255
+            } else if dist < 1.0 {
+                ((1.0 - (dist - 0.72) / 0.28).clamp(0.0, 1.0) * 255.0) as u8
+            } else {
+                0
+            };
+            image.put_pixel(x, y, Rgba([255, 255, 255, alpha]));
+        }
+    }
     create_texture_layer(device, &image)
 }
 
@@ -564,8 +716,7 @@ fn build_particles(
     let mut particles = Vec::with_capacity((dust_count + spark_count) as usize);
 
     for index in 0..dust_count {
-        let widths = [2.0, 2.0, 3.0, 3.0, 4.0];
-        let heights = [5.0, 6.0, 8.0, 10.0, 12.0];
+        let sizes = [3.0, 4.0, 5.0, 6.0, 7.0];
         let lane_width = width_f / dust_count as f32;
         let x0 =
             lane_width * (index as f32 + 0.5) + rng.range(-lane_width * 0.28, lane_width * 0.28);
@@ -576,13 +727,9 @@ fn build_particles(
         particles.push(OverlayParticle {
             x0,
             y0,
-            width: widths[rng.index(widths.len())],
-            height: heights[rng.index(heights.len())],
-            speed: rng.range(height_f * 0.012, height_f * 0.038),
+            size: sizes[rng.index(sizes.len())],
+            speed: rng.range(height_f * 0.010, height_f * 0.032),
             rise: false,
-            sway: rng.range(width_f * 0.003, width_f * 0.014),
-            phase: rng.range(0.16, 0.42),
-            offset: rng.range(0.0, std::f32::consts::TAU),
             color,
         });
     }
@@ -607,13 +754,9 @@ fn build_particles(
                 + side_bias * (width_f - side_safe * 2.0).max(1.0)
                 + rng.range(-width_f * 0.018, width_f * 0.018),
             y0: lower_band + rng.next_f32() * height_f * 0.36,
-            width: [2.0, 2.0, 3.0][rng.index(3)],
-            height: [16.0, 20.0, 24.0, 30.0][rng.index(4)],
-            speed: rng.range(height_f * 0.030, height_f * 0.088),
+            size: [4.0, 5.0, 6.0, 8.0][rng.index(4)],
+            speed: rng.range(height_f * 0.026, height_f * 0.070),
             rise: true,
-            sway: rng.range(width_f * 0.002, width_f * 0.010),
-            phase: rng.range(0.55, 1.10),
-            offset: rng.range(0.0, std::f32::consts::TAU),
             color,
         });
     }
@@ -761,11 +904,11 @@ fn read_pcm16_wav(path: &Path) -> Result<PcmAudio> {
     }
     anyhow::ensure!(
         audio_format == 1,
-        "only PCM wav is supported for native visualizer"
+        "only PCM wav is supported for the story visualizer"
     );
     anyhow::ensure!(
         bits_per_sample == 16,
-        "only 16-bit wav is supported for native visualizer"
+        "only 16-bit wav is supported for the story visualizer"
     );
     anyhow::ensure!(
         channels > 0 && sample_rate > 0,
@@ -827,7 +970,7 @@ impl ShaderRenderer {
             device.CreateInputLayout(&input_elements, &vertex_blob, Some(&mut input_layout))?;
         }
 
-        let max_quads = 384;
+        let max_quads = 640;
         let vertex_buffer = create_vertex_buffer(device, max_quads)?;
         let sampler = create_sampler(device)?;
         let blend_state = create_alpha_blend_state(device)?;
@@ -847,7 +990,7 @@ impl ShaderRenderer {
     fn bind_static_pipeline(&self, _device: &ID3D11Device, _width: u32, _height: u32) {}
 
     #[allow(clippy::too_many_arguments)]
-    fn draw_story_frame(
+    fn draw_timeline_frame(
         &self,
         context: &ID3D11DeviceContext,
         render_target: &ID3D11RenderTargetView,
@@ -856,9 +999,11 @@ impl ShaderRenderer {
         side_pad: u32,
         panel_width: u32,
         panel_height: u32,
-        progress: f64,
-        background: &TextureLayer,
-        foreground: &TextureLayer,
+        current_progress: f64,
+        current_layer: &SceneLayer,
+        next_layer: Option<&SceneLayer>,
+        next_progress: f64,
+        next_alpha: f32,
         logo: Option<&TextureLayer>,
         white: &TextureLayer,
         visual_plan: &VisualPlan,
@@ -876,7 +1021,6 @@ impl ShaderRenderer {
         let stride = size_of::<QuadVertex>() as u32;
         let offset = 0_u32;
         let vertex_buffers = [Some(self.vertex_buffer.clone())];
-        let srvs = [Some(background.srv.clone())];
         let samplers = [Some(self.sampler.clone())];
         let rtvs = [Some(render_target.clone())];
 
@@ -901,43 +1045,34 @@ impl ShaderRenderer {
             context.VSSetShader(Some(&self.vertex_shader), None);
             context.PSSetShader(Some(&self.pixel_shader), None);
             context.PSSetSamplers(0, Some(&samplers));
-            context.PSSetShaderResources(0, Some(&srvs));
         }
 
-        self.draw_quad(
+        self.draw_scene_layer(
             context,
             width,
             height,
-            RectPixels::new(0.0, 0.0, width as f32, height as f32),
-            UvRect::full(),
-            background,
-            [1.0, 1.0, 1.0, 1.0],
+            side_pad,
+            panel_width,
+            panel_height,
+            current_progress,
+            current_layer,
+            1.0,
         );
-
-        let max_y = foreground.height.saturating_sub(panel_height);
-        let src_y = (max_y as f32 * progress.clamp(0.0, 1.0) as f32) / foreground.height as f32;
-        let src_x =
-            foreground.width.saturating_sub(panel_width) as f32 * 0.5 / foreground.width as f32;
-        let fg_uv = UvRect {
-            left: src_x,
-            top: src_y,
-            right: src_x + panel_width as f32 / foreground.width as f32,
-            bottom: src_y + panel_height as f32 / foreground.height as f32,
-        };
-        self.draw_quad(
-            context,
-            width,
-            height,
-            RectPixels::new(
-                side_pad as f32,
-                0.0,
-                panel_width as f32,
-                panel_height as f32,
-            ),
-            fg_uv,
-            foreground,
-            [1.0, 1.0, 1.0, 1.0],
-        );
+        if let Some(layer) = next_layer {
+            if next_alpha > 0.0 {
+                self.draw_scene_layer(
+                    context,
+                    width,
+                    height,
+                    side_pad,
+                    panel_width,
+                    panel_height,
+                    next_progress,
+                    layer,
+                    next_alpha,
+                );
+            }
+        }
 
         self.draw_white_overlays(
             context,
@@ -973,25 +1108,69 @@ impl ShaderRenderer {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn draw_scene_layer(
+        &self,
+        context: &ID3D11DeviceContext,
+        width: u32,
+        height: u32,
+        side_pad: u32,
+        panel_width: u32,
+        panel_height: u32,
+        progress: f64,
+        layer: &SceneLayer,
+        alpha: f32,
+    ) {
+        self.draw_quad(
+            context,
+            width,
+            height,
+            RectPixels::new(0.0, 0.0, width as f32, height as f32),
+            UvRect::full(),
+            &layer.background,
+            [1.0, 1.0, 1.0, alpha],
+        );
+
+        let foreground = &layer.foreground;
+        let max_y = foreground.height.saturating_sub(panel_height);
+        let src_y = (max_y as f32 * progress.clamp(0.0, 1.0) as f32) / foreground.height as f32;
+        let src_x =
+            foreground.width.saturating_sub(panel_width) as f32 * 0.5 / foreground.width as f32;
+        let fg_uv = UvRect {
+            left: src_x,
+            top: src_y,
+            right: src_x + panel_width as f32 / foreground.width as f32,
+            bottom: src_y + panel_height as f32 / foreground.height as f32,
+        };
+        self.draw_quad(
+            context,
+            width,
+            height,
+            RectPixels::new(
+                side_pad as f32,
+                0.0,
+                panel_width as f32,
+                panel_height as f32,
+            ),
+            fg_uv,
+            foreground,
+            [1.0, 1.0, 1.0, alpha],
+        );
+    }
+
     fn draw_white_overlays(
         &self,
         context: &ID3D11DeviceContext,
         width: u32,
         height: u32,
-        white: &TextureLayer,
+        circle: &TextureLayer,
         visual_plan: &VisualPlan,
         frame_idx: usize,
         frame_time: f32,
     ) {
         let margin = (height as f32 * 0.08).max(30.0);
-        let mut vertices = Vec::with_capacity(
-            self.max_quads
-                .min(visual_plan.particles.len() + AUDIO_BAR_COUNT)
-                * 6,
-        );
+        let mut vertices = Vec::with_capacity(self.max_quads.min(360) * 6);
         for particle in &visual_plan.particles {
-            let x =
-                particle.x0 + (frame_time * particle.phase + particle.offset).sin() * particle.sway;
             let travel = if particle.rise {
                 particle.y0 - frame_time * particle.speed
             } else {
@@ -1002,7 +1181,7 @@ impl ShaderRenderer {
                 &mut vertices,
                 width as f32,
                 height as f32,
-                RectPixels::new(x, y, particle.width, particle.height),
+                RectPixels::new(particle.x0, y, particle.size, particle.size),
                 UvRect::full(),
                 particle.color,
             );
@@ -1021,7 +1200,7 @@ impl ShaderRenderer {
         }
 
         if !vertices.is_empty() {
-            self.draw_vertices(context, white, &vertices);
+            self.draw_vertices(context, circle, &vertices);
         }
     }
 
@@ -1178,14 +1357,14 @@ fn append_audio_visualizer_clusters(
     if bars.is_empty() {
         return;
     }
-    let bars_per_side = AUDIO_BARS_PER_SIDE.min(bars.len() / 2).max(6);
-    let cluster_width = (video_width * 0.14).clamp(320.0, 560.0);
-    let side_gap = (video_width * 0.19).clamp(260.0, 760.0);
-    let bottom_gap = (video_height * 0.105).clamp(72.0, 132.0);
+    let bars_per_side = AUDIO_BARS_PER_SIDE.min(bars.len() / 2).max(8);
+    let cluster_width = (video_width * 0.17).clamp(220.0, 420.0);
+    let side_gap = (video_width * 0.13).clamp(130.0, 520.0);
+    let bottom_gap = (video_height * 0.115).clamp(58.0, 124.0);
     let base_y = (video_height - bottom_gap).max(0.0);
-    let max_bar_height = (video_height * 0.056).clamp(30.0, 72.0);
+    let max_stack_height = (video_height * 0.068).clamp(34.0, 82.0);
     let slot = cluster_width / bars_per_side as f32;
-    let draw_width = (slot * 0.58).clamp(5.0, 18.0);
+    let dot_size = (slot * 0.46).clamp(5.5, 12.0);
     let left_start = side_gap;
     let right_start = (video_width - side_gap - cluster_width).max(left_start + cluster_width);
     let left_source = &bars[..bars_per_side];
@@ -1199,8 +1378,8 @@ fn append_audio_visualizer_clusters(
         left_start,
         base_y,
         slot,
-        draw_width,
-        max_bar_height,
+        dot_size,
+        max_stack_height,
         left_source,
         color,
         false,
@@ -1212,8 +1391,8 @@ fn append_audio_visualizer_clusters(
         right_start,
         base_y,
         slot,
-        draw_width,
-        max_bar_height,
+        dot_size,
+        max_stack_height,
         right_source,
         color,
         true,
@@ -1228,13 +1407,16 @@ fn append_audio_bar_cluster(
     start_x: f32,
     base_y: f32,
     slot: f32,
-    draw_width: f32,
-    max_bar_height: f32,
+    dot_size: f32,
+    max_stack_height: f32,
     bars: &[f32],
     color: [f32; 4],
     reverse: bool,
 ) {
     let center = (bars.len().saturating_sub(1)) as f32 * 0.5;
+    let max_levels = 5_usize;
+    let gap = (dot_size * 0.42).max(2.0);
+    let step = dot_size + gap;
     for idx in 0..bars.len() {
         let source_idx = if reverse { bars.len() - 1 - idx } else { idx };
         let value = bars[source_idx].clamp(0.0, 1.0);
@@ -1243,20 +1425,25 @@ fn append_audio_bar_cluster(
         } else {
             0.0
         };
-        let envelope = 0.72 + (1.0 - distance) * 0.34;
-        let h = (max_bar_height * value.sqrt() * envelope).clamp(3.0, max_bar_height);
-        let x = start_x + idx as f32 * slot + (slot - draw_width) * 0.5;
-        let y = base_y - h;
-        let mut bar_color = color;
-        bar_color[3] = (color[3] * (0.44 + value * 0.32)).clamp(0.18, 0.66);
-        append_quad_vertices(
-            target,
-            video_width,
-            video_height,
-            RectPixels::new(x, y, draw_width, h),
-            UvRect::full(),
-            bar_color,
-        );
+        let envelope = 0.64 + (1.0 - distance) * 0.42;
+        let stack_height =
+            (max_stack_height * value.sqrt() * envelope).clamp(dot_size, max_stack_height);
+        let levels = ((stack_height / step).ceil() as usize).clamp(1, max_levels);
+        let x = start_x + idx as f32 * slot + (slot - dot_size) * 0.5;
+        for level in 0..levels {
+            let y = base_y - dot_size - level as f32 * step;
+            let level_fade = 1.0 - (level as f32 / max_levels as f32) * 0.26;
+            let mut dot_color = color;
+            dot_color[3] = (color[3] * (0.34 + value * 0.34) * level_fade).clamp(0.14, 0.70);
+            append_quad_vertices(
+                target,
+                video_width,
+                video_height,
+                RectPixels::new(x, y, dot_size, dot_size),
+                UvRect::full(),
+                dot_color,
+            );
+        }
     }
 }
 
@@ -1397,10 +1584,10 @@ float4 ps_main(VsOut input) : SV_Target {
 "#;
 
 const AUDIO_BAR_COUNT: usize = 48;
-const AUDIO_BARS_PER_SIDE: usize = 18;
+const AUDIO_BARS_PER_SIDE: usize = 16;
 
 fn maybe_flush_context(context: &ID3D11DeviceContext) {
-    if std::env::var("SPAM_NATIVE_D3D11_FLUSH_EACH_FRAME")
+    if std::env::var("SPAM_VIDEO_D3D11_FLUSH_EACH_FRAME")
         .map(|value| {
             matches!(
                 value.trim().to_ascii_lowercase().as_str(),
@@ -1439,7 +1626,7 @@ fn remux_h264_to_mp4(ffmpeg_bin: &PathBuf, input: &Path, output: &Path, fps: u32
         .with_context(|| format!("failed to start ffmpeg {}", ffmpeg_bin.display()))?;
     anyhow::ensure!(
         result.status.success(),
-        "failed to remux native h264 to mp4: {}",
+        "failed to remux story h264 to mp4: {}",
         String::from_utf8_lossy(&result.stderr)
     );
     Ok(())
