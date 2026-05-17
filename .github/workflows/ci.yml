@@ -41,6 +41,9 @@ jobs:
             tools/benchmark_4k60_render.py \
             tools/benchmark_end_to_end_30s.py
 
+      - name: Install unit test dependencies
+        run: python -m pip install httpx
+
       - name: Run policy unit tests
         run: python -m unittest discover -s tests
 
