@@ -657,13 +657,18 @@ fn build_audio_bar_frames(
     let channels = audio.channels.max(1) as usize;
     let samples_per_frame = audio.sample_rate as f32 / fps.max(1) as f32;
     let start_sample = (start_seconds.max(0.0) * audio.sample_rate as f64) as usize * channels;
+    let total_samples = audio.samples.len();
     for frame_idx in 0..frame_count {
         let center_sample =
             start_sample + (frame_idx as f32 * samples_per_frame) as usize * channels;
         let window = (audio.sample_rate as usize / 30).max(512) * channels;
         let start = center_sample.saturating_sub(window / 2);
-        let end = (center_sample + window / 2).min(audio.samples.len());
-        frames.push(compute_audio_bars(&audio.samples[start..end], channels));
+        let end = (center_sample + window / 2).min(total_samples);
+        if start >= total_samples || start >= end {
+            frames.push(vec![0.0; AUDIO_BAR_COUNT]);
+        } else {
+            frames.push(compute_audio_bars(&audio.samples[start..end], channels));
+        }
     }
     Ok(frames)
 }

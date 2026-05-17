@@ -18,7 +18,7 @@
 ## Runtime / Ops
 - `docs/gpu_runtime_2026-05-14.md`: current GPU-only audio/video runtime contract and clone defaults.
 - `../docs/portable_windows_release.md`: Windows portable app build/release contract.
-- `../docs/release_notes_v0.1.4.md`: native-renderer portable release notes.
+- `../docs/release_notes_v0.1.5.md`: native clip end-audio hotfix release notes.
 - `docs/test_report_audio_pipeline.md`: runtime validations for audio stage.
 - `docs/test_report_auto_convert_text.md`: runtime validations for convert stage.
 - `docs/test_report_video_pipeline.md`: runtime validations for video stage.

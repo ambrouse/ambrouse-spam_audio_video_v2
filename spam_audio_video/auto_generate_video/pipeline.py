@@ -528,6 +528,11 @@ class VideoPipeline:
         raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 30.0)
         per_scene_duration = raw_scene_duration if 5.0 <= raw_scene_duration <= 300.0 else 30.0
         audio_seconds = float(analysis.get("total_audio_seconds") or 0.0)
+        current_audio_seconds = self._resolve_session_audio_duration_seconds(dirs["session_dir"])
+        if current_audio_seconds > 0 and (
+            audio_seconds <= 0 or abs(current_audio_seconds - audio_seconds) > 0.5
+        ):
+            audio_seconds = current_audio_seconds
         transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
         image_files = self._build_render_image_sequence(
             source_image_files,
@@ -670,6 +675,11 @@ class VideoPipeline:
         raw_scene_duration = float(analysis.get("scene_duration_seconds") or config.scene_duration_seconds or 30.0)
         per_scene_duration = raw_scene_duration if 5.0 <= raw_scene_duration <= 300.0 else 30.0
         audio_seconds = float(analysis.get("total_audio_seconds") or 0.0)
+        current_audio_seconds = self._resolve_session_audio_duration_seconds(dirs["session_dir"])
+        if current_audio_seconds > 0 and (
+            audio_seconds <= 0 or abs(current_audio_seconds - audio_seconds) > 0.5
+        ):
+            audio_seconds = current_audio_seconds
         transition_seconds = min(1.2, max(0.45, per_scene_duration * 0.10))
         image_files = self._build_render_image_sequence(
             source_image_files,
@@ -1113,6 +1123,15 @@ class VideoPipeline:
         silent_path = dirs["renders_dir"] / safe_name
         session_video_copy = dirs["video_root"] / safe_name
         combine_started_at = time.perf_counter()
+        if progress_callback:
+            progress_callback({
+                "stage": "video_render_combine_clips",
+                "current": total,
+                "total": total,
+                "message": f"Combining {len(clip_paths)} rendered clips into the final timeline.",
+                "files_done": total,
+                "preview_text": f"{len(clip_paths)} clips",
+            })
         if len(clip_paths) <= 1:
             shutil.copy2(clip_paths[0], silent_path)
             render_timings["combine_clips_s"] = round(time.perf_counter() - combine_started_at, 3)
@@ -1148,6 +1167,15 @@ class VideoPipeline:
             ])
             self._run_cmd(xfade_cmd, timeout=full_video_timeout)
             render_timings["combine_clips_s"] = round(time.perf_counter() - combine_started_at, 3)
+        if progress_callback:
+            progress_callback({
+                "stage": "video_render_combine_clips",
+                "current": total,
+                "total": total,
+                "message": "Combined clips into the final timeline.",
+                "files_done": total,
+                "preview_text": silent_path.name,
+            })
 
         overlay_audio_path: Path | None = None
         if render_with_audio:
