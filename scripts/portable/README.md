@@ -8,6 +8,7 @@ Goal:
 - user does not need to install Python manually.
 - user does not need to install Node manually.
 - release zip contains portable Python and Node runtimes.
+- release zip contains the native GPU story renderer binary for fast 16:9 60fps renders.
 - first run creates local virtual environments inside the extracted folder.
 - GPU audio/video defaults stay enabled.
 
@@ -22,13 +23,13 @@ Still required on the target machine:
 Build:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.3
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.4
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.3-win64.zip
+dist/ambrouse-studio-v0.1.4-win64.zip
 ```
 
 User run:

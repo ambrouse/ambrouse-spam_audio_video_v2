@@ -1,5 +1,5 @@
 param(
-  [string]$Version = "v0.1.3",
+  [string]$Version = "v0.1.4",
   [string]$PythonVersion = "3.12.7",
   [string]$NodeVersion = "22.13.1",
   [switch]$SkipRuntimeDownload
@@ -49,6 +49,45 @@ function Copy-Tree($Source, $Target, [string[]]$ExcludeDirs = @(), [string[]]$Ex
   }
 }
 
+function Ensure-NativeRenderer($BuildRoot) {
+  $RendererRoot = Join-Path $RepoRoot "spam_audio_video\native_renderers\story_gpu_renderer"
+  $ExeName = "story_gpu_renderer.exe"
+  $Cargo = Get-Command cargo -ErrorAction SilentlyContinue
+  if ($Cargo) {
+    Step "Building native GPU renderer"
+    Push-Location $RendererRoot
+    try {
+      & $Cargo.Source build --release
+      if ($LASTEXITCODE -ne 0) {
+        throw "cargo build --release failed for story_gpu_renderer"
+      }
+    } finally {
+      Pop-Location
+    }
+  } else {
+    Write-Host "[portable][warn] cargo not found; trying to package an existing native renderer binary." -ForegroundColor Yellow
+  }
+
+  $Candidates = @(
+    (Join-Path $RendererRoot "target\release\$ExeName"),
+    "D:\cargo-target\story_gpu_renderer\release\$ExeName"
+  )
+  $SourceExe = $null
+  foreach ($Candidate in $Candidates) {
+    if (Test-Path -LiteralPath $Candidate) {
+      $SourceExe = (Resolve-Path -LiteralPath $Candidate).Path
+      break
+    }
+  }
+  if (!$SourceExe) {
+    throw "Native renderer binary not found. Install Rust/Cargo or build spam_audio_video/native_renderers/story_gpu_renderer first."
+  }
+
+  $TargetDir = Join-Path $BuildRoot "spam_audio_video\native_renderers\story_gpu_renderer\target\release"
+  New-Item -ItemType Directory -Force -Path $TargetDir | Out-Null
+  Copy-Item -LiteralPath $SourceExe -Destination (Join-Path $TargetDir $ExeName) -Force
+}
+
 Step "Preparing folders"
 New-Item -ItemType Directory -Force -Path $DistDir, $CacheDir | Out-Null
 Remove-Tree $BuildRoot
@@ -64,6 +103,7 @@ Copy-Tree (Join-Path $RepoRoot "toll-brouser-gpt-gemini") (Join-Path $BuildRoot 
   -ExcludeFiles @(".env", "*.pyc", "*.pyo", "*.log")
 
 Copy-Tree (Join-Path $RepoRoot "scripts\portable\runtime") $BuildRoot
+Ensure-NativeRenderer $BuildRoot
 
 Step "Writing default .env files"
 Copy-Item (Join-Path $BuildRoot "spam_audio_video\.env.example") (Join-Path $BuildRoot "spam_audio_video\.env") -Force

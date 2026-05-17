@@ -183,6 +183,9 @@ def main() -> int:
     parser.add_argument("--seconds-per-image", type=float, default=30.0)
     parser.add_argument("--encoder", default="auto")
     parser.add_argument("--video-preset", default="quality")
+    parser.add_argument("--width", type=int, default=3840)
+    parser.add_argument("--height", type=int, default=2160)
+    parser.add_argument("--fps", type=int, default=60)
     parser.add_argument("--render-workers", type=int, default=6)
     parser.add_argument("--output-name", default="")
     parser.add_argument("--report-path", default="")
@@ -190,6 +193,7 @@ def main() -> int:
     parser.add_argument("--artifact-renderer", default="current_ffmpeg")
     parser.add_argument("--scenario", default="one_scene_30s")
     parser.add_argument("--baseline-elapsed-s", type=float, default=102.707)
+    parser.add_argument("--with-audio", action="store_true")
     parser.add_argument("--no-artifacts", action="store_true")
     args = parser.parse_args()
 
@@ -208,9 +212,9 @@ def main() -> int:
     )
     cfg = VideoPipelineConfig(
         scene_duration_seconds=args.seconds_per_image,
-        width=3840,
-        height=2160,
-        fps=60,
+        width=max(512, int(args.width)),
+        height=max(512, int(args.height)),
+        fps=max(1, int(args.fps)),
         video_encoder=args.encoder,
         video_preset=args.video_preset,
         video_crf=18,
@@ -234,7 +238,7 @@ def main() -> int:
             args.session_id,
             cfg,
             output_name=output_name,
-            render_with_audio=False,
+            render_with_audio=bool(args.with_audio),
         )
     finally:
         if original_manifest is None:
@@ -276,6 +280,7 @@ def main() -> int:
             "video_preset": cfg.video_preset,
             "render_workers": cfg.render_workers,
             "scenes": args.scenes,
+            "render_with_audio": bool(args.with_audio),
         },
         "render_manifest": result,
         "ffprobe": probe,

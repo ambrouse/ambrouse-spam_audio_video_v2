@@ -38,29 +38,29 @@
 Use this when you want the most stable "download, extract, run" build.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.3
+powershell -ExecutionPolicy Bypass -File scripts/portable/build_portable_release.ps1 -Version v0.1.4
 ```
 
 Output:
 
 ```text
-dist/ambrouse-studio-v0.1.3-win64.zip
+dist/ambrouse-studio-v0.1.4-win64.zip
 ```
 
 User flow:
 
-1. Download `ambrouse-studio-v0.1.3-win64.zip` from GitHub Releases.
+1. Download `ambrouse-studio-v0.1.4-win64.zip` from GitHub Releases.
 2. Extract it to a normal folder, for example `D:\AmbrouseStudio`.
 3. Run `RUN.bat`.
 4. Open `http://127.0.0.1:8080`.
 5. In the Bridge tab, open/ping ports and login Gemini/GPT once.
 
-The portable zip includes Python and Node runtimes, so users do not need to install Python or Node manually. NVIDIA driver and Chrome/Gemini/GPT login are still machine-specific and must exist on the target PC.
+The portable zip includes Python, Node, and the native GPU story renderer binary, so users do not need to install Python, Node, or Rust manually. NVIDIA driver and Chrome/Gemini/GPT login are still machine-specific and must exist on the target PC.
 
 Need manual input from you before final release:
 
 - send the README banner image; recommended target path: `docs/assets/readme-banner.png`.
-- pick the release version, for example `v0.1.3`.
+- pick the release version, for example `v0.1.4`.
 - decide whether release is standard portable or a very large full/offline model bundle.
 
 ---
@@ -214,7 +214,9 @@ curl http://127.0.0.1:8080/api/health
 
 Primary docs from story pipeline:
 
+- `docs/release_notes_v0.1.4.md`
 - `docs/setup_release_validation_2026-05-17.md`
+- `docs/portable_windows_release.md`
 - `spam_audio_video/docs/gpu_runtime_2026-05-14.md`
 - `spam_audio_video/docs/architecture_audio_pipeline.md`
 - `spam_audio_video/docs/architecture_auto_convert_text.md`

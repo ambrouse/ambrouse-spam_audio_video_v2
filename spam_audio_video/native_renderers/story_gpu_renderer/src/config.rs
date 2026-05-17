@@ -31,6 +31,8 @@ pub struct VideoConfig {
     pub fps: u32,
     pub duration_seconds: f64,
     #[serde(default)]
+    pub audio_start_seconds: f64,
+    #[serde(default)]
     pub per_scene_duration_seconds: f64,
     pub encoder: String,
     pub preset: String,
@@ -110,8 +112,13 @@ impl RendererInput {
             self.schema_version
         );
         anyhow::ensure!(self.renderer == "native_gpu", "renderer must be native_gpu");
-        anyhow::ensure!(self.video.width == 3840, "width must stay 3840");
-        anyhow::ensure!(self.video.height == 2160, "height must stay 2160");
+        anyhow::ensure!(self.video.width >= 512, "width must be at least 512");
+        anyhow::ensure!(self.video.height >= 288, "height must be at least 288");
+        let ratio = self.video.width as f64 / self.video.height.max(1) as f64;
+        anyhow::ensure!(
+            (1.70..=1.95).contains(&ratio),
+            "native renderer expects a 16:9 landscape output"
+        );
         anyhow::ensure!(self.video.fps == 60, "fps must stay 60");
         anyhow::ensure!(
             self.video.duration_seconds > 0.0,

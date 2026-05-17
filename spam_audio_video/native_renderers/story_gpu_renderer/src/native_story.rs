@@ -517,7 +517,12 @@ fn build_visual_plan(
     let audio_bars = if input.visual_overlay.audio_visualizer_enabled {
         match &input.audio_path {
             Some(path) if path.exists() => Some(AudioBars {
-                frames: build_audio_bar_frames(path, fps, frames as usize)?,
+                frames: build_audio_bar_frames(
+                    path,
+                    fps,
+                    frames as usize,
+                    input.video.audio_start_seconds,
+                )?,
                 color: visualizer_color,
             }),
             _ => None,
@@ -638,7 +643,12 @@ impl LcgRng {
     }
 }
 
-fn build_audio_bar_frames(path: &Path, fps: u32, frame_count: usize) -> Result<Vec<Vec<f32>>> {
+fn build_audio_bar_frames(
+    path: &Path,
+    fps: u32,
+    frame_count: usize,
+    start_seconds: f64,
+) -> Result<Vec<Vec<f32>>> {
     let audio = read_pcm16_wav(path)?;
     if audio.samples.is_empty() || audio.sample_rate == 0 {
         return Ok(vec![vec![0.0; AUDIO_BAR_COUNT]; frame_count]);
@@ -646,8 +656,10 @@ fn build_audio_bar_frames(path: &Path, fps: u32, frame_count: usize) -> Result<V
     let mut frames = Vec::with_capacity(frame_count);
     let channels = audio.channels.max(1) as usize;
     let samples_per_frame = audio.sample_rate as f32 / fps.max(1) as f32;
+    let start_sample = (start_seconds.max(0.0) * audio.sample_rate as f64) as usize * channels;
     for frame_idx in 0..frame_count {
-        let center_sample = (frame_idx as f32 * samples_per_frame) as usize * channels;
+        let center_sample =
+            start_sample + (frame_idx as f32 * samples_per_frame) as usize * channels;
         let window = (audio.sample_rate as usize / 30).max(512) * channels;
         let start = center_sample.saturating_sub(window / 2);
         let end = (center_sample + window / 2).min(audio.samples.len());
@@ -1162,8 +1174,8 @@ fn append_audio_visualizer_clusters(
         return;
     }
     let bars_per_side = AUDIO_BARS_PER_SIDE.min(bars.len() / 2).max(6);
-    let cluster_width = (video_width * 0.18).clamp(360.0, 720.0);
-    let side_gap = (video_width * 0.145).clamp(180.0, 620.0);
+    let cluster_width = (video_width * 0.14).clamp(320.0, 560.0);
+    let side_gap = (video_width * 0.19).clamp(260.0, 760.0);
     let bottom_gap = (video_height * 0.105).clamp(72.0, 132.0);
     let base_y = (video_height - bottom_gap).max(0.0);
     let max_bar_height = (video_height * 0.056).clamp(30.0, 72.0);
@@ -1380,7 +1392,7 @@ float4 ps_main(VsOut input) : SV_Target {
 "#;
 
 const AUDIO_BAR_COUNT: usize = 48;
-const AUDIO_BARS_PER_SIDE: usize = 14;
+const AUDIO_BARS_PER_SIDE: usize = 18;
 
 fn maybe_flush_context(context: &ID3D11DeviceContext) {
     if std::env::var("SPAM_NATIVE_D3D11_FLUSH_EACH_FRAME")

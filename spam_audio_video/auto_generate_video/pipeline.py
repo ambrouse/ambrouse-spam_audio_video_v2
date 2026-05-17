@@ -539,7 +539,7 @@ class VideoPipeline:
         )
         width = max(512, int(config.width))
         height = max(512, int(config.height))
-        fps = 60
+        fps = max(1, min(120, int(config.fps or 60)))
         motion = max(0.04, min(0.24, float(config.motion_intensity)))
         side_pad = max(60, int(width * 0.060))
         panel_width = max(320, width - side_pad * 2)
@@ -680,8 +680,8 @@ class VideoPipeline:
             session_id=session_id,
         )
         total = len(image_files)
-        # Render at 60fps for smoother camera movement, especially after speeding up motion.
-        fps = 60
+        # Honor the requested FPS so web controls and benchmark runs change actual render cost.
+        fps = max(1, min(120, int(config.fps or 60)))
         width = max(512, int(config.width))
         height = max(512, int(config.height))
         # Use smooth start->end camera paths (seconds-based) instead of oscillation to avoid shake.
@@ -697,6 +697,9 @@ class VideoPipeline:
         fixed_scroll_zoom = min(1.55, 1.34 + motion * 1.60)
         frames = max(1, int(math.ceil(per_scene_duration * fps)))
         gop = max(30, fps * 2)
+        clip_timeout = max(360, int(math.ceil(per_scene_duration * 16)))
+        full_video_timeout = max(480, int(math.ceil(max(audio_seconds, per_scene_duration * total) * 8)))
+        mux_timeout = max(300, int(math.ceil(max(audio_seconds, per_scene_duration * total) * 2)))
         requested_encoder = str(config.video_encoder or "auto").strip().lower() or "auto"
         selected_encoder = self._resolve_video_encoder(config.video_encoder)
         max_workers = max(1, min(8, int(config.render_workers or 6)))
@@ -718,17 +721,45 @@ class VideoPipeline:
             and not render_with_audio
             and str(os.getenv("SPAM_VIDEO_FUSE_SINGLE_SCENE_OVERLAY", "0")).strip().lower() in {"1", "true", "yes", "on"}
         )
-        use_native_gpu_clip = str(os.getenv("SPAM_VIDEO_NATIVE_GPU_RENDER", "0")).strip().lower() in {"1", "true", "yes", "on"}
+        native_mode = str(os.getenv("SPAM_VIDEO_NATIVE_GPU_RENDER", "auto")).strip().lower()
+        native_forced = native_mode in {"1", "true", "yes", "on", "force"}
+        native_disabled = native_mode in {"0", "false", "no", "off", "disabled"}
+        native_ratio = (float(width) / float(height)) if height > 0 else 0.0
+        native_supported_contract = (
+            width >= 512
+            and height >= 288
+            and 1.70 <= native_ratio <= 1.95
+            and fps == 60
+            and selected_encoder == "h264_nvenc"
+        )
+        use_native_gpu_clip = False
         native_renderer_bin: Path | None = None
         native_final_visual = False
         native_visual_overlay: dict | None = None
         native_visual_audio_path: Path | None = None
+        native_fallback_reason = ""
+        if not native_disabled:
+            if not native_supported_contract:
+                if native_forced:
+                    raise RuntimeError("Native GPU renderer is locked to the production 4K60 h264_nvenc output contract.")
+                native_fallback_reason = "native renderer supports only 16:9 60fps h264_nvenc outputs"
+            else:
+                try:
+                    native_renderer_bin = self._resolve_native_story_renderer_bin()
+                    use_native_gpu_clip = True
+                except FileNotFoundError as exc:
+                    if native_forced:
+                        raise
+                    native_fallback_reason = str(exc)
         if use_native_gpu_clip:
-            if len(image_files) != 1:
-                raise RuntimeError("Native GPU clip renderer currently requires exactly one render image.")
-            if width != 3840 or height != 2160 or fps != 60:
-                raise RuntimeError("Native GPU clip renderer is locked to the production 4K60 output contract.")
-            native_renderer_bin = self._resolve_native_story_renderer_bin()
+            if not native_supported_contract:
+                raise RuntimeError("Native GPU renderer is locked to 16:9 60fps h264_nvenc outputs.")
+            native_workers = str(os.getenv("SPAM_VIDEO_NATIVE_RENDER_WORKERS", "1") or "1").strip()
+            try:
+                native_worker_limit = max(1, min(2, int(native_workers)))
+            except ValueError:
+                native_worker_limit = 1
+            max_workers = min(max_workers, native_worker_limit)
             native_final_visual = True
             native_audio_override = str(os.getenv("SPAM_VIDEO_NATIVE_AUDIO_PATH") or "").strip()
             if native_audio_override:
@@ -761,6 +792,11 @@ class VideoPipeline:
                 "dominant_rgb": palette.get("dominant_rgb", []),
                 "accent_rgb": palette.get("accent_rgb", []),
             }
+            native_clip_dir = f"clips_native_{width}x{height}_{fps}"
+            if native_visual_audio_path:
+                native_clip_dir += "_av"
+            clips_dir = dirs["renders_dir"] / native_clip_dir
+            clips_dir.mkdir(parents=True, exist_ok=True)
         if fuse_single_scene_overlay:
             logo_path = self._resolve_logo_path()
             palette = self._sample_image_palette(image_files[0])
@@ -922,6 +958,9 @@ class VideoPipeline:
             idx = int(plan["index"])
             src_path = Path(plan["image_path"])
             out_path = Path(plan["clip_path"])
+            if self._video_file_matches_render_contract(out_path, width, height, fps, per_scene_duration):
+                return idx, out_path, src_path.name, 0.0
+            out_path.unlink(missing_ok=True)
             if bool(plan.get("native_renderer")):
                 self._render_native_gpu_clip(
                     renderer_bin=Path(str(plan["native_renderer_bin"])),
@@ -935,6 +974,7 @@ class VideoPipeline:
                     height=height,
                     fps=fps,
                     duration_seconds=per_scene_duration,
+                    audio_start_seconds=max(0.0, (idx - 1) * (per_scene_duration - transition_seconds)),
                     side_pad=side_pad,
                     panel_width=panel_width,
                     panel_height=panel_height,
@@ -1015,7 +1055,12 @@ class VideoPipeline:
                     "+faststart",
                     str(out_path),
                 ])
-            self._run_cmd(cmd, timeout=360)
+            self._run_cmd(cmd, timeout=clip_timeout)
+            if not self._video_file_matches_render_contract(out_path, width, height, fps, per_scene_duration):
+                raise RuntimeError(
+                    "Rendered clip does not match the requested render contract "
+                    f"({width}x{height}@{fps}, {per_scene_duration:.3f}s): {out_path}"
+                )
             return idx, out_path, src_path.name, round(time.perf_counter() - clip_started_at, 3)
 
         if max_workers <= 1:
@@ -1101,7 +1146,7 @@ class VideoPipeline:
                 "+faststart",
                 str(silent_path),
             ])
-            self._run_cmd(xfade_cmd, timeout=480)
+            self._run_cmd(xfade_cmd, timeout=full_video_timeout)
             render_timings["combine_clips_s"] = round(time.perf_counter() - combine_started_at, 3)
 
         overlay_audio_path: Path | None = None
@@ -1139,6 +1184,7 @@ class VideoPipeline:
                 selected_encoder=selected_encoder,
                 project_id=project_id,
                 session_id=session_id,
+                timeout=full_video_timeout,
                 should_stop=should_stop,
             )
             render_timings["visual_overlay_s"] = round(time.perf_counter() - visual_overlay_started_at, 3)
@@ -1195,7 +1241,7 @@ class VideoPipeline:
                 str(rendered_with_audio),
             ]
             mux_started_at = time.perf_counter()
-            self._run_cmd(audio_cmd, timeout=300)
+            self._run_cmd(audio_cmd, timeout=mux_timeout)
             render_timings["mux_audio_s"] = round(time.perf_counter() - mux_started_at, 3)
             if session_audio_copy != rendered_with_audio:
                 shutil.copy2(rendered_with_audio, session_audio_copy)
@@ -1237,6 +1283,8 @@ class VideoPipeline:
             "render_workers": max_workers,
             "native_gpu_renderer_used": bool(use_native_gpu_clip),
             "native_gpu_renderer_bin": self._safe_rel(native_renderer_bin) if native_renderer_bin else "",
+            "native_gpu_renderer_mode": native_mode or "auto",
+            "native_gpu_fallback_reason": native_fallback_reason,
             "timings_s": {
                 **render_timings,
                 "total_render_video_s": round(time.perf_counter() - render_started_at, 3),
@@ -1425,6 +1473,7 @@ class VideoPipeline:
         selected_encoder: str,
         project_id: str,
         session_id: str,
+        timeout: int = 480,
         should_stop: Callable[[], bool] | None = None,
     ) -> dict:
         if should_stop and should_stop():
@@ -1517,7 +1566,7 @@ class VideoPipeline:
             str(temp_path),
         ])
         try:
-            self._run_cmd(cmd, timeout=480)
+            self._run_cmd(cmd, timeout=timeout)
             temp_path.replace(input_path)
         finally:
             try:
@@ -2422,6 +2471,7 @@ class VideoPipeline:
         height: int,
         fps: int,
         duration_seconds: float,
+        audio_start_seconds: float,
         side_pad: int,
         panel_width: int,
         panel_height: int,
@@ -2451,6 +2501,7 @@ class VideoPipeline:
                 "height": int(height),
                 "fps": int(fps),
                 "duration_seconds": round(float(duration_seconds), 3),
+                "audio_start_seconds": round(max(0.0, float(audio_start_seconds)), 3),
                 "per_scene_duration_seconds": round(float(duration_seconds), 3),
                 "encoder": str(config.video_encoder or "auto"),
                 "preset": str(config.video_preset or "quality"),
@@ -2700,6 +2751,85 @@ class VideoPipeline:
                 f"stdout: {stdout[:1200]}\n"
                 f"stderr: {stderr[:1200]}"
             )
+
+    def _is_readable_video_file(self, path: Path) -> bool:
+        if not path.exists() or not path.is_file() or path.stat().st_size <= 0:
+            return False
+        cmd = [
+            self.ffmpeg_bin,
+            "-hide_banner",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-map",
+            "0:v:0",
+            "-c",
+            "copy",
+            "-f",
+            "null",
+            os.devnull,
+        ]
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=45,
+                check=False,
+            )
+            return result.returncode == 0
+        except Exception:
+            return False
+
+    def _video_file_matches_render_contract(
+        self,
+        path: Path,
+        width: int,
+        height: int,
+        fps: int,
+        duration_seconds: float,
+    ) -> bool:
+        if not self._is_readable_video_file(path):
+            return False
+        try:
+            result = subprocess.run(
+                [self.ffmpeg_bin, "-hide_banner", "-i", str(path)],
+                cwd=str(self.repo_root),
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=20,
+                check=False,
+            )
+        except Exception:
+            return False
+        text = f"{result.stderr or ''}\n{result.stdout or ''}"
+        if not text.strip():
+            return False
+        video_match = re.search(
+            r"Video:\s*[^,\n]+.*?(\d{3,5})x(\d{3,5}).*?(\d+(?:\.\d+)?)\s*fps",
+            text,
+            flags=re.I | re.S,
+        )
+        if not video_match:
+            return False
+        found_width, found_height, found_fps = video_match.groups()
+        if int(found_width) != int(width) or int(found_height) != int(height):
+            return False
+        if abs(float(found_fps) - float(fps)) > 0.5:
+            return False
+        duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", text)
+        if duration_match:
+            hours, minutes, seconds = duration_match.groups()
+            duration = int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+            if abs(duration - float(duration_seconds)) > 0.25:
+                return False
+        return True
 
     def _rel(self, path: Path) -> str:
         return str(path.resolve().relative_to(self.repo_root)).replace("\\", "/")
